@@ -918,7 +918,7 @@ async function loadWorkerAttendance() {
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     for (let d = new Date(start); d <= now; d.setDate(d.getDate() + 1)) {
-      const dayStr = d.toISOString().slice(0, 10);
+      const dayStr = todayStr(d.getTime() + 12 * 3600000); // noon of that local day -> its IST date
       const st = attendanceStatusForDay(punches, dayStr);
       const reg = myRegs.find(r => r.date === dayStr);
       days.push({ dayStr, ...st, regularised: reg && reg.status === 'approved', regPending: reg && reg.status === 'pending' });
@@ -1849,7 +1849,7 @@ async function endAssistedSession() {
 // System days (computed by the server from punches + approved corrections) against what
 // each vendor invoiced; any gap is highlighted. Finance enters invoice days once Central
 // HR has locked the month.
-function lastMonthStr() { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); }
+function lastMonthStr() { const [y, m] = todayStr(Date.now()).split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`; }
 const BILL_STATUS = {
   overbilled: ['badge-bad', 'Overbilled'], underbilled: ['badge-warn', 'Underbilled'],
   match: ['badge-ok', 'Matches'], no_invoice: ['badge-neutral', 'No invoice yet'],

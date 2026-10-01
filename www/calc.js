@@ -11,7 +11,11 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   return R * c;
 }
 
-function todayStr(ts) { return new Date(ts).toISOString().slice(0, 10); }
+// A 'day' is an IST calendar day (UTC+05:30), the same rule as the server
+// (tsg-workforce-backend/src/services/time.js) — not UTC, which put punches before
+// 05:30 IST on the previous day.
+const IST_OFFSET_MS = 330 * 60000;
+function todayStr(ts) { return new Date(ts + IST_OFFSET_MS).toISOString().slice(0, 10); }
 
 // `punches` here is a worker's own punch list (as returned by GET /api/punches/me or
 // GET /api/punches?workerId=...), using the backend's snake_case field names.
