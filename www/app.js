@@ -1990,13 +1990,15 @@ async function hrDecideReg(id, decision) {
 function renderHrExceptions() {
   const s = requireHr(); if (!s) return;
   withLoading(
-    () => window.Api.listPunches({ result: 'blocked' }),
-    (blocked) => {
+    () => Promise.all([window.Api.listPunches({ result: 'blocked' }), window.Api.listPunches({ minRisk: 20 })]),
+    ([blocked, risky]) => {
       // worker_name comes joined in from the server, so Security (no worker-list
       // access) still sees whose attempt it was; only roles that can open a worker
       // record get the name as a link.
       const canView = hasPerm('workers.read');
       const sorted = [...blocked].sort((a, b) => b.ts - a.ts);
+      const riskyOnly = risky.filter(p => p.result === 'ok').sort((a, b) => b.risk_score - a.risk_score);
+      const nameLink = (p) => canView ? `<a href="javascript:void(0)" onclick="viewWorker('${p.worker_id}')" style="color:inherit">${esc(p.worker_name||p.worker_id)}</a>` : esc(p.worker_name||p.worker_id);
       renderShell(`
         <div class="card">
           <h3>${t('hrExceptions')}</h3>
@@ -2004,9 +2006,22 @@ function renderHrExceptions() {
             <div class="approval-row">
               ${p.selfie_data_url ? `<img src="${p.selfie_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}
               <div class="approval-info">
-                <b>${canView ? `<a href="javascript:void(0)" onclick="viewWorker('${p.worker_id}')" style="color:inherit">${esc(p.worker_name||p.worker_id)}</a>` : esc(p.worker_name||p.worker_id)}</b> — ${p.type.toUpperCase()} <span class="badge badge-bad">${esc(p.reason)}</span><br/>
+                <b>${nameLink(p)}</b> — ${p.type.toUpperCase()} <span class="badge badge-bad">${esc(p.reason)}</span><br/>
                 <span class="muted small">${new Date(p.ts).toLocaleString()} · accuracy ${p.accuracy||'?'}m · distance ${p.distance_m!=null?p.distance_m+'m':'?'}</span>
                 ${p.face_match_note ? `<br/><span class="muted small">${t('aiNote')}: ${esc(p.face_match_note)}</span>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="card">
+          <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>AI risk triage</h3>
+          <p class="muted small">Punches that were allowed — every check passed — but borderline on something. Worth a glance, not a block.</p>
+          ${riskyOnly.length === 0 ? emptyState('Nothing flagged', 'shield') : riskyOnly.map(p => `
+            <div class="approval-row">
+              ${p.selfie_data_url ? `<img src="${p.selfie_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}
+              <div class="approval-info">
+                <b>${nameLink(p)}</b> — ${p.type.toUpperCase()} <span class="badge ${p.risk_score >= 50 ? 'badge-bad' : 'badge-warn'}">risk ${p.risk_score}</span><br/>
+                <span class="muted small">${new Date(p.ts).toLocaleString()} · ${esc(p.risk_reasons || '')}</span>
               </div>
             </div>
           `).join('')}
