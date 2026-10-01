@@ -139,6 +139,8 @@ const Api = {
   // ---- Audit ----
   listAudit: () => apiFetch('/api/audit'),
 
+  dashboard: (f) => apiFetch('/api/reports/dashboard?' + new URLSearchParams(Object.entries(f || {}).filter(([, v]) => v))),
+  reportFilters: () => apiFetch('/api/reports/filters'),
   // ---- Reports: vendor bill check (R16) + month lock ----
   vendorBill: (month) => apiFetch('/api/reports/vendor-bill?month=' + encodeURIComponent(month)),
   vendorBillWorkers: (vendorId, month) => apiFetch(`/api/reports/vendor-bill/${vendorId}/workers?month=${encodeURIComponent(month)}`),

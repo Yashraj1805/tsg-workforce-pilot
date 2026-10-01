@@ -329,6 +329,7 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/audit', icon: 'ledger', label: () => t('hrAudit'), perms: ['audit.read'], nav: true },
   { hash: '#/hr/workers', icon: 'user', label: () => 'Workers', perms: ['workers.read'] },
   { hash: '#/hr/billing', icon: 'ledger', label: () => 'Vendor bill check', perms: ['billing.read'] },
+  { hash: '#/hr/reports', icon: 'doc', label: () => 'Reports (Excel)', perms: ['reports.read'] },
   { hash: '#/hr/timeguard', icon: 'shield', label: () => t('timeGuard'), perms: ['workers.read', 'punches.read'] },
   { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
@@ -1422,50 +1423,91 @@ async function loadHrContext() {
   return { workers, locations, vendors, punches, regularisations };
 }
 
+// BRD §12 dashboard: "Live count of active, punched in, not punched, punched out and
+// blocked. Filters for brand and vendor." Counts come from the server (scoped to the
+// user); Smart Insights / Time Guard still run on the loaded punches.
 function renderHrDashboard() {
   const s = requireHr(); if (!s) return;
-  withLoading(loadHrContext, (ctx) => {
-    const today = todayStr(Date.now());
-    const activeWorkers = ctx.workers.filter(w => w.status === 'approved');
-    const punchedInToday = new Set(ctx.punches.filter(p => p.type === 'in' && p.result === 'ok' && todayStr(p.ts) === today).map(p => p.worker_id));
-    const notPunched = activeWorkers.filter(w => !punchedInToday.has(w.id)).length;
-    const blocked7d = ctx.punches.filter(p => p.result === 'blocked' && p.ts > Date.now() - 7 * 86400000).length;
-    const pendingApprovals = ctx.workers.filter(w => w.status === 'pending').length;
+  const f = window._dashFilters || {};
+  withLoading(() => Promise.all([loadHrContext(), window.Api.dashboard(f), window.Api.reportFilters()]), ([ctx, d, opts]) => {
     const flags = computeTimeGuardFlags(ctx);
     const insights = computeSmartInsights({ ...ctx, flags });
-
+    const sel = (id, label, items, cur) => `<select id="${id}" class="input" style="margin:0" onchange="setDashFilter()"><option value="">${label}</option>${items.map(i => `<option value="${esc(i.id)}" ${i.id === cur ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</select>`;
     renderShell(`
-      <div class="card insight-card">
-        <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>${t('smartInsights')}</h3>
-        <ul class="insight-list">${insights.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
-        ${insights.byLocation.length ? `<p class="muted small" style="margin-top:12px">${t('punchesByLocationToday')}</p>${barChart(insights.byLocation)}` : ''}
-        <a href="#/hr/timeguard" class="link-btn small" style="display:inline-block;margin-top:8px">${t('viewTimeGuard')} (${flags.length}) →</a>
-        <p class="muted small" style="margin-top:10px">${t('onDeviceNote')}</p>
+      <div class="card">
+        <div class="filter-row">
+          ${sel('df_brand', 'All brands', opts.brands.map(b => ({ id: b, name: b })), f.brand)}
+          ${sel('df_vendor', 'All vendors', opts.vendors, f.vendorId)}
+        </div>
       </div>
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-num">${activeWorkers.length}</div><div class="stat-label">${t('activeManpower')}</div></div>
-        <div class="stat-card"><div class="stat-num">${punchedInToday.size}</div><div class="stat-label">${t('punchedInToday')}</div></div>
-        <div class="stat-card"><div class="stat-num">${notPunched}</div><div class="stat-label">${t('notPunched')}</div></div>
-        <div class="stat-card warn"><div class="stat-num">${blocked7d}</div><div class="stat-label">${t('blockedAttempts')}</div></div>
+        <div class="stat-card"><div class="stat-num">${d.active}</div><div class="stat-label">${t('activeManpower')}</div></div>
+        <div class="stat-card"><div class="stat-num">${d.punchedIn}</div><div class="stat-label">${t('punchedInToday')}</div></div>
+        <div class="stat-card"><div class="stat-num">${d.notPunched}</div><div class="stat-label">${t('notPunched')}</div></div>
+        <div class="stat-card"><div class="stat-num">${d.punchedOut}</div><div class="stat-label">Punched out</div></div>
+        <div class="stat-card warn"><div class="stat-num">${d.blocked}</div><div class="stat-label">Blocked today</div></div>
         <div class="stat-card ${hasPerm('workers.approve') ? 'action' : ''}" ${hasPerm('workers.approve') ? `onclick="location.hash='#/hr/approvals';render()"` : ''}>
-          <div class="stat-num">${pendingApprovals}</div><div class="stat-label">${t('pendingApprovals')}</div>
+          <div class="stat-num">${d.pendingApprovals}</div><div class="stat-label">${t('pendingApprovals')}</div>
         </div>
       </div>
       <div class="card">
         <h3>By location</h3>
         <table class="tbl">
-          <thead><tr><th>${t('location')}</th><th>${t('activeManpower')}</th><th>${t('punchedInToday')}</th></tr></thead>
-          <tbody>
-            ${ctx.locations.map(l => {
-              const ws = activeWorkers.filter(w => w.location_id === l.id);
-              const inCount = ws.filter(w => punchedInToday.has(w.id)).length;
-              return `<tr><td>${esc(l.name)}</td><td>${ws.length}</td><td>${inCount}</td></tr>`;
-            }).join('')}
-          </tbody>
+          <thead><tr><th>${t('location')}</th><th>${t('activeManpower')}</th><th>${t('punchedInToday')}</th><th>Out</th></tr></thead>
+          <tbody>${d.byLocation.map(l => `<tr><td>${esc(l.location)}</td><td>${l.active}</td><td>${l.punchedIn}</td><td>${l.punchedOut}</td></tr>`).join('')}</tbody>
         </table>
+      </div>
+      <div class="card insight-card">
+        <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>${t('smartInsights')}</h3>
+        <ul class="insight-list">${insights.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+        ${insights.byLocation.length ? `<p class="muted small" style="margin-top:12px">${t('punchesByLocationToday')}</p>${barChart(insights.byLocation)}` : ''}
+        <a href="#/hr/timeguard" class="link-btn small" style="display:inline-block;margin-top:8px">${t('viewTimeGuard')} (${flags.length}) →</a>
       </div>
     `);
   });
+}
+function setDashFilter() {
+  window._dashFilters = { brand: fieldVal('df_brand') || undefined, vendorId: fieldVal('df_vendor') || undefined };
+  renderHrDashboard();
+}
+
+// ---- Reports (R16, BRD §16): Excel downloads filtered by date, brand, location, vendor, job ----
+function renderHrReports() {
+  const s = requireHr(); if (!s) return;
+  withLoading(() => window.Api.reportFilters(), (opts) => {
+    const today = todayStr(Date.now());
+    const sel = (id, label, items) => `<label>${label}</label><select id="${id}" class="input"><option value="">All</option>${items.map(i => `<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('')}</select>`;
+    renderShell(`
+      <div class="card">
+        <h3>Reports</h3>
+        <p class="muted small">Excel files, limited to the workers you can see.</p>
+        ${sel('rf_brand', 'Brand', opts.brands.map(b => ({ id: b, name: b })))}
+        ${sel('rf_location', 'Location', opts.locations)}
+        ${sel('rf_vendor', 'Vendor', opts.vendors)}
+        ${sel('rf_job', 'Job', opts.jobs)}
+      </div>
+      <div class="card">
+        <h3>Day-wise attendance</h3>
+        <label>From</label><input id="rf_from" type="date" class="input" value="${today.slice(0, 8)}01" max="${today}" />
+        <label>To</label><input id="rf_to" type="date" class="input" value="${today}" max="${today}" />
+        <button class="btn primary block" onclick="downloadReport('attendance')">⬇ Attendance (Excel)</button>
+      </div>
+      <div class="card">
+        <h3>Muster roll</h3>
+        <label>Month</label><input id="rf_month" type="month" class="input" value="${today.slice(0, 7)}" max="${today.slice(0, 7)}" />
+        <button class="btn primary block" onclick="downloadReport('muster')">⬇ Muster roll (Excel)</button>
+        ${hasPerm('billing.read') ? `<button class="btn secondary block" onclick="downloadReport('vendor-bill')">⬇ Vendor bill check (Excel)</button>` : ''}
+      </div>`);
+  });
+}
+async function downloadReport(kind) {
+  const q = new URLSearchParams();
+  for (const [k, id] of [['brand', 'rf_brand'], ['locationId', 'rf_location'], ['vendorId', 'rf_vendor'], ['jobId', 'rf_job']]) if (fieldVal(id)) q.set(k, fieldVal(id));
+  let path, name;
+  if (kind === 'attendance') { q.set('from', fieldVal('rf_from')); q.set('to', fieldVal('rf_to')); path = '/api/reports/attendance.xlsx'; name = `attendance-${fieldVal('rf_from')}-to-${fieldVal('rf_to')}.xlsx`; }
+  else { q.set('month', fieldVal('rf_month')); path = `/api/reports/${kind}.xlsx`; name = `${kind}-${fieldVal('rf_month')}.xlsx`; }
+  try { await window.Api.downloadCsv(`${path}?${q}`, name); toast('Downloaded ' + name, 'success'); }
+  catch (e) { toast(e.message, 'error'); }
 }
 
 function renderHrApprovals() {
@@ -1596,6 +1638,50 @@ function renderHrAttendance() {
     }
   );
 }
+// ---- Worker history (BRD §13: "Day-wise in and out time. Selfie and map open on tap.") ----
+function renderDayHistory(w, punches) {
+  const days = {};
+  for (const p of punches) { const d = todayStr(p.ts); (days[d] = days[d] || []).push(p); }
+  const keys = Object.keys(days).sort().reverse().slice(0, 31);
+  if (!keys.length) return '';
+  return `<div class="card">
+    <h3>Day-wise history</h3>
+    <table class="tbl">
+      <thead><tr><th>${t('date')}</th><th>In</th><th>Out</th><th>Hrs</th><th>${t('status')}</th></tr></thead>
+      <tbody>${keys.map(d => {
+        const st = attendanceStatusForDay(days[d], d);
+        const blocked = days[d].filter(p => p.result === 'blocked').length;
+        return `<tr onclick="showPunchDay('${d}')" style="cursor:pointer">
+          <td>${d}</td><td>${fmtTime(st.inTime)}</td><td>${fmtTime(st.outTime)}</td><td>${st.hours || '-'}</td>
+          <td>${statusBadge(st.status)}${blocked ? ` <span class="badge badge-bad">${blocked} blocked</span>` : ''}${days[d].some(p => p.offline) ? ' <span class="badge badge-neutral">offline</span>' : ''}</td></tr>
+          <tr><td colspan="5" id="pday_${d}" style="padding:0"></td></tr>`;
+      }).join('')}</tbody>
+    </table>
+    <p class="muted small">Tap a day to see the selfies and where each punch was made.</p>
+  </div>`;
+}
+function showPunchDay(d) {
+  const cell = document.getElementById('pday_' + d);
+  if (cell.innerHTML) { cell.innerHTML = ''; return; }
+  const w = window._histWorker;
+  const ps = (window._histPunches || []).filter(p => todayStr(p.ts) === d).sort((a, b) => a.ts - b.ts);
+  cell.innerHTML = `<div style="padding:8px">
+    <div class="day-detail">${ps.map(p => `<div class="compare-item">
+      ${p.selfie_data_url ? `<img src="${p.selfie_data_url}" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
+      <span class="small">${p.type.toUpperCase()} ${fmtTime(p.ts)} ${p.result === 'blocked' ? '⛔ ' + esc(p.reason) : '✅'} ${p.distance_m != null ? p.distance_m + ' m' : ''}</span></div>`).join('')}</div>
+    <div id="pmap_${d}" class="day-map"></div></div>`;
+  const loc = w && w.location;
+  const pts = ps.filter(p => p.lat != null);
+  if (!window.L || (!loc && !pts.length)) return;
+  const center = loc ? [loc.lat, loc.lng] : [pts[0].lat, pts[0].lng];
+  const map = L.map('pmap_' + d, { zoomControl: false, attributionControl: false }).setView(center, 17);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+  if (loc) L.circle([loc.lat, loc.lng], { radius: loc.radius, color: '#1e40af', fillOpacity: 0.1 }).addTo(map);
+  pts.forEach(p => L.circleMarker([p.lat, p.lng], { radius: 7, color: p.result === 'ok' ? '#16a34a' : '#b91c1c', fillOpacity: 0.9 }).addTo(map).bindPopup(`${p.type} ${fmtTime(p.ts)}`));
+  if (pts.length) map.fitBounds(L.latLngBounds([...(loc ? [[loc.lat, loc.lng]] : []), ...pts.map(p => [p.lat, p.lng])]).pad(0.4));
+  setTimeout(() => map.invalidateSize(), 100);
+}
+
 // ---- R14: transfer / exit / blacklist, and R03 phone change ----
 // Every action needs a reason; the server records it in the worker's history.
 function renderManageWorkerCard(w, locations, vendors) {
@@ -1700,6 +1786,7 @@ function renderHrWorkerDetail() {
       hasPerm('workers.manage') ? Promise.all([window.Api.listLocations(), window.Api.listVendors()]) : Promise.resolve([[], []]),
     ]),
     ([w, punches, history, [locations, vendors]]) => {
+      window._histWorker = w; window._histPunches = punches;
       const sorted = [...punches].sort((a, b) => b.ts - a.ts).slice(0, 20);
       renderShell(`
         <div class="card">
@@ -1733,6 +1820,7 @@ function renderHrWorkerDetail() {
             <tbody>${history.map(e => `<tr><td class="small">${new Date(e.ts).toLocaleString()}</td><td>${esc(e.detail)}</td><td>${esc(e.reason || '')}</td><td class="small">${esc(e.by_user || '')}</td></tr>`).join('')}</tbody>
           </table>`}
         </div>
+        ${renderDayHistory(w, punches)}
         <div class="card">
           <h3>${t('comparePhotos')}</h3>
           <p class="muted small">${t('comparePhotosHint')}</p>
@@ -2469,6 +2557,7 @@ function render() {
     '#/hr/users': renderHrUsers,
     '#/hr/workers': renderHrWorkers,
     '#/hr/billing': renderHrBilling,
+    '#/hr/reports': renderHrReports,
     '#/hr/assist': renderHrAssist,
     '#/hr/gate': renderHrGate,
     '#/hr/logout-confirm': renderHrLogoutConfirm,

@@ -331,3 +331,7 @@ h3 .bi-en { font-size: 0.7em; }
 .cal-legend i.present { background: #16a34a; } .cal-legend i.absent { background: #dc2626; }
 .cal-legend i.missed { background: #facc15; } .cal-legend i.off { background: #94a3b8; }
 .cal-legend .bi-hi, .cal-legend .bi-en { display: inline; margin-right: 3px; }
+.filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.day-detail { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.day-detail img { width: 90px; height: 90px; object-fit: cover; border-radius: 8px; }
+.day-map { height: 180px; border-radius: 8px; margin-top: 6px; }
