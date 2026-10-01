@@ -310,7 +310,7 @@ const ROLE_LABELS = {
   location_head: 'Location Head', vendor_coordinator: 'Vendor Coordinator',
   mis_finance: 'MIS / Finance', security: 'Security', system_admin: 'System Admin',
 };
-function isAdminSession(s) { return !!s && s.role !== 'worker'; }
+function isAdminSession(s) { return !!s && s.role !== 'worker' && s.role !== 'kiosk'; }
 function hasPerm(p) { const s = getSession(); return !!(s && s.permissions && s.permissions.includes(p)); }
 
 // Every admin screen, in nav-priority order. `perms` must all be held to open it; the
@@ -331,6 +331,7 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/billing', icon: 'ledger', label: () => 'Vendor bill check', perms: ['billing.read'] },
   { hash: '#/hr/reports', icon: 'doc', label: () => 'Reports (Excel)', perms: ['reports.read'] },
   { hash: '#/hr/emails', icon: 'inbox', label: () => 'Automatic emails', perms: ['emails.manage'] },
+  { hash: '#/hr/kiosks', icon: 'camera', label: () => 'Gate tablets', perms: ['kiosks.manage'] },
   { hash: '#/hr/timeguard', icon: 'shield', label: () => t('timeGuard'), perms: ['workers.read', 'punches.read'] },
   { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
@@ -356,6 +357,7 @@ function navLink(href, iconName, label, forceActive) {
 }
 
 function renderNav(role) {
+  if (role === 'kiosk') return '';
   if (role === 'worker') {
     return `<nav class="bottom-nav">
       ${navLink('#/w/home', 'home', t('home'))}
@@ -383,6 +385,7 @@ function renderSplash() {
       <p class="muted small">${t('connectedTo')} ${esc(base)}</p>
       <button class="btn primary block" onclick="startWorkerLogin()">${t('roleWorker')}</button>
       <button class="btn secondary block" onclick="startHrLogin()">${t('roleHr')}</button>
+      <button class="link-btn small" style="margin-top:10px" onclick="renderKioskPair()">🖥️ Gate tablet (kiosk)</button>
       <button class="link-btn small" style="margin-top:16px" onclick="location.hash='#/settings';render()">${t('serverSettings')}</button>
     </div>
   `);
@@ -2251,6 +2254,124 @@ async function gateSearch() {
   } catch (e) { el.innerHTML = ''; toast(e.message, 'error'); }
 }
 
+// ---------------- Gate tablet / kiosk (R20: face punch for workers without phones) ----------------
+// Paired once with a code from HR. Worker types the last 4 digits of their mobile, taps
+// their own photo, looks at the camera. The server checks the face positively matches.
+function renderKioskPair() {
+  renderShell(`
+    <div class="card center-card">
+      <h3>🖥️ Gate tablet setup</h3>
+      <p class="muted small">Enter the 6-digit pairing code from HR (More → Gate tablets). This tablet then stays on this site's punch screen.</p>
+      <input id="kp_code" class="input" maxlength="6" inputmode="numeric" />
+      <button class="btn primary block" onclick="kioskPairNow()">Pair this tablet</button>
+      <button class="link-btn small" onclick="location.hash='#/';render()">${t('back')}</button>
+    </div>`);
+}
+async function kioskPairNow() {
+  try {
+    const r = await window.Api.kioskPair(fieldVal('kp_code').trim());
+    setSessionData({ token: r.token, role: 'kiosk', kiosk: r.kiosk });
+    location.hash = '#/kiosk'; render();
+  } catch (e) { toast(e.message, 'error'); }
+}
+let kioskState = { digits: '' };
+function renderKiosk() {
+  const s = getSession();
+  if (!s || s.role !== 'kiosk') { location.hash = '#/'; render(); return; }
+  kioskState = { digits: '' };
+  speak('अपने मोबाइल नंबर के आख़िरी चार अंक दबाएँ', 'Type the last 4 digits of your mobile number');
+  renderKioskKeypad();
+}
+function renderKioskKeypad() {
+  const s = getSession();
+  const d = kioskState.digits;
+  renderShell(`
+    <div class="card center-card kiosk">
+      <div class="muted">${esc(s.kiosk.name)} · ${esc(s.kiosk.location ? s.kiosk.location.name : '')}</div>
+      <h3>${bi('मोबाइल नंबर के आख़िरी 4 अंक', 'Last 4 digits of your mobile')}</h3>
+      <div class="kiosk-digits">${[0, 1, 2, 3].map(i => `<span>${d[i] || ''}</span>`).join('')}</div>
+      <div class="kiosk-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓'].map(k => `<button class="btn ${k === '✓' ? 'success' : 'secondary'}" onclick="kioskKey('${k}')">${k}</button>`).join('')}</div>
+    </div>`);
+}
+async function kioskKey(k) {
+  if (k === '⌫') kioskState.digits = kioskState.digits.slice(0, -1);
+  else if (k === '✓') { if (kioskState.digits.length === 4) return kioskFind(); }
+  else if (kioskState.digits.length < 4) kioskState.digits += k;
+  renderKioskKeypad();
+  if (kioskState.digits.length === 4) kioskFind();
+}
+async function kioskFind() {
+  try {
+    const list = await window.Api.kioskCandidates(kioskState.digits);
+    if (!list.length) { showResult(false, 'नंबर नहीं मिला', 'Not found', [bi('इस साइट पर इस नंबर का कोई कर्मचारी नहीं', 'No worker at this site with that number')], renderKiosk); return; }
+    speak('अपनी फोटो पर टैप करें', 'Tap your photo');
+    renderShell(`
+      <div class="card center-card kiosk">
+        <h3>${bi('अपनी फोटो पर टैप करें', 'Tap your photo')}</h3>
+        <div class="tile-grid">${list.map(c => `
+          <button class="tile" ${c.next === 'done' ? 'disabled' : ''} onclick="kioskPunch('${c.id}', '${c.next}')">
+            ${c.photo ? `<img src="${c.photo}" class="avatar" style="width:90px;height:90px" />` : `<span class="tile-icon">🙂</span>`}
+            <span class="tile-hi">${esc(c.firstName)}</span>
+            <span class="tile-en">${c.next === 'in' ? 'Punch in' : c.next === 'out' ? 'Punch out' : 'Day complete'}</span>
+          </button>`).join('')}</div>
+        <button class="btn secondary block" onclick="renderKiosk()">${t('back')}</button>
+      </div>`);
+  } catch (e) { if (e.status === 401) { clearSessionData(); location.hash = '#/'; render(); } toast(e.message, 'error'); renderKiosk(); }
+}
+async function kioskPunch(workerId, next) {
+  const selfie = await scanFaceForPunch();
+  if (!selfie.ok) { if (!selfie.cancelled) toast(selfie.error, 'error'); return renderKiosk(); }
+  renderShell(`<div class="card center-card">${spinnerRow(t('checkingLocation'))}</div>`);
+  const pos = await window.TSGNative.getPosition();
+  if (!pos.ok) return showResult(false, 'लोकेशन नहीं मिली', 'Location not available', [pos.error], renderKiosk);
+  const integrity = window.TSGNative.mockLocationCheck ? await window.TSGNative.mockLocationCheck() : { ok: false };
+  try {
+    const r = await window.Api.kioskPunch({ workerId, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, selfieDataUrl: await shrinkDataUrl(selfie.dataUrl, 960, 0.8),
+      integrity: integrity.ok ? { mock: !!integrity.mock, legacyMockSetting: !!integrity.legacyMockSetting } : null });
+    const el = showResult(true, r.type === 'in' ? 'पंच इन हो गया' : 'पंच आउट हो गया', r.type === 'in' ? 'Punched in' : 'Punched out', [esc(r.worker), `${bi('समय', 'Time')}: <b>${fmtTime(r.ts)}</b>`], renderKiosk);
+    setTimeout(() => { if (el.isConnected) el.querySelector('.result-close').onclick(); }, 6000); // next person
+  } catch (e) {
+    const d = e.data || {};
+    const [hi, en] = BLOCK_REASON[d.reason] || ['पंच नहीं हुआ', 'Punch not saved'];
+    const el = showResult(false, hi, en, [esc(e.message)], renderKiosk);
+    setTimeout(() => { if (el.isConnected) el.querySelector('.result-close').onclick(); }, 8000);
+  }
+}
+
+// Admin: set up gate tablets (kiosks.manage).
+function renderHrKiosks() {
+  const s = requireHr(); if (!s) return;
+  withLoading(() => Promise.all([window.Api.listKiosks(), window.Api.listLocations()]), ([kiosks, locations]) => {
+    renderShell(`
+      <div class="card">
+        <h3>Gate tablets</h3>
+        <p class="muted small">A tablet at the gate lets workers without a phone punch with their face (R20). Pair it with the code shown here; the code works once, for 24 hours.</p>
+        ${window._newKioskCode ? `<div class="gps-status ok">Pairing code for <b>${esc(window._newKioskCode.name)}</b>: <b style="font-size:24px;letter-spacing:4px">${window._newKioskCode.code}</b><br/><span class="small">On the tablet: open the app → Gate tablet (kiosk) → enter this code.</span></div>` : ''}
+        <table class="tbl">${kiosks.map(k => `<tr><td>${esc(k.name)}<br/><span class="muted small">${esc(k.location_name || '')}</span></td>
+          <td>${k.status === 'active' ? (k.paired_at ? '<span class="badge badge-ok">Paired</span>' : '<span class="badge badge-warn">Waiting for pairing</span>') : '<span class="badge badge-neutral">Retired</span>'}</td>
+          <td><button class="btn secondary small" onclick="kioskNewCode('${k.id}', '${esc(k.name)}')">New code</button>
+          ${k.status === 'active' ? `<button class="btn danger small" onclick="kioskRetire('${k.id}')">Retire</button>` : ''}</td></tr>`).join('')}</table>
+        <details><summary class="link-btn">Add gate tablet</summary>
+          <label>Name</label><input id="nk_name" class="input" placeholder="e.g. Main gate" />
+          <label>${t('location')}</label><select id="nk_loc" class="input">${locations.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
+          <button class="btn primary small" onclick="kioskCreate()">Create and get pairing code</button>
+        </details>
+      </div>`);
+  });
+}
+async function kioskCreate() {
+  try { const r = await window.Api.createKiosk({ name: fieldVal('nk_name').trim(), locationId: fieldVal('nk_loc') }); window._newKioskCode = { name: r.name, code: r.pairingCode }; renderHrKiosks(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+async function kioskNewCode(id, name) {
+  if (!confirm('A new code replaces the current tablet — the old one stops working. Continue?')) return;
+  try { const r = await window.Api.kioskNewCode(id); window._newKioskCode = { name, code: r.pairingCode }; renderHrKiosks(); } catch (e) { toast(e.message, 'error'); }
+}
+async function kioskRetire(id) {
+  if (!confirm('Retire this gate tablet? It stops working immediately.')) return;
+  try { await window.Api.setKioskStatus(id, 'retired'); renderHrKiosks(); } catch (e) { toast(e.message, 'error'); }
+}
+
 // ---------------- Site HR: register a worker on HR's phone (BRD design rule 8) ----------------
 // The worker's own OTP (sent to their mobile) unlocks a short-lived "assisted" worker
 // session; this phone then runs the normal registration wizard for them. HR's own
@@ -2581,6 +2702,8 @@ function render() {
   const s = getSession();
   // Assisted registration only ever shows the registration wizard (never punching).
   if (s && s.assisted && hash !== '#/w/register') { location.hash = hash = '#/w/register'; }
+  // A paired gate tablet only ever shows the kiosk screen (R20).
+  if (s && s.role === 'kiosk' && hash !== '#/kiosk') { location.hash = hash = '#/kiosk'; }
   if (hash === '#/' || hash === '') {
     if (s && s.role === 'worker') { location.hash = hash = '#/w/home'; }
     else if (isAdminSession(s)) { location.hash = hash = adminHomeHash(); }
@@ -2610,6 +2733,8 @@ function render() {
     '#/hr/billing': renderHrBilling,
     '#/hr/reports': renderHrReports,
     '#/hr/emails': renderHrEmails,
+    '#/hr/kiosks': renderHrKiosks,
+    '#/kiosk': renderKiosk,
     '#/hr/assist': renderHrAssist,
     '#/hr/gate': renderHrGate,
     '#/hr/logout-confirm': renderHrLogoutConfirm,

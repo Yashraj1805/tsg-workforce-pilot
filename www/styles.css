@@ -335,3 +335,10 @@ h3 .bi-en { font-size: 0.7em; }
 .day-detail { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
 .day-detail img { width: 90px; height: 90px; object-fit: cover; border-radius: 8px; }
 .day-map { height: 180px; border-radius: 8px; margin-top: 6px; }
+
+/* ---- Gate tablet (R20) ---- */
+.kiosk h3 { font-size: 24px; }
+.kiosk-digits { display: flex; justify-content: center; gap: 10px; margin: 14px 0; }
+.kiosk-digits span { width: 56px; height: 64px; border: 2px solid var(--border, #cbd5e1); border-radius: 10px; font-size: 34px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.kiosk-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 360px; margin: 0 auto; }
+.kiosk-pad .btn { font-size: 28px; padding: 18px 0; }

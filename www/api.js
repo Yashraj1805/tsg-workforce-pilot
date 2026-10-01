@@ -35,7 +35,8 @@ async function apiFetch(path, opts = {}) {
   const base = getApiBase();
   if (!base) throw new ApiError('No server configured yet — set the API server address first.', 0);
   const session = getSession();
-  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  // X-Device-Id lets the server check a gate tablet is the device it was paired on (R20).
+  const headers = { 'Content-Type': 'application/json', 'X-Device-Id': getDeviceId(), ...(opts.headers || {}) };
   if (session && session.token) headers.Authorization = 'Bearer ' + session.token;
 
   let res;
@@ -162,6 +163,16 @@ const Api = {
   emailReports: () => apiFetch('/api/email-reports'),
   updateEmailReport: (key, body) => apiFetch('/api/email-reports/' + key, { method: 'PUT', body }),
   sendEmailReportNow: (key) => apiFetch('/api/email-reports/' + key + '/send-now', { method: 'POST' }),
+
+  // ---- Gate tablet (R20) ----
+  listKiosks: () => apiFetch('/api/kiosks'),
+  createKiosk: (k) => apiFetch('/api/kiosks', { method: 'POST', body: k }),
+  kioskNewCode: (id) => apiFetch('/api/kiosks/' + id + '/new-code', { method: 'POST' }),
+  setKioskStatus: (id, status) => apiFetch('/api/kiosks/' + id, { method: 'PUT', body: { status } }),
+  kioskPair: (code) => apiFetch('/api/kiosk/pair', { method: 'POST', body: { code, deviceId: getDeviceId() } }),
+  kioskMe: () => apiFetch('/api/kiosk/me'),
+  kioskCandidates: (last4) => apiFetch('/api/kiosk/candidates?last4=' + last4),
+  kioskPunch: (data) => apiFetch('/api/kiosk/punch', { method: 'POST', body: data }),
 
   // ---- Admin users (System Admin) ----
   listAdminRoles: () => apiFetch('/api/admin-users/roles'),
