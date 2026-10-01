@@ -1,3 +1,4 @@
+import { registerPlugin } from '@capacitor/core';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Geolocation } from '@capacitor/geolocation';
 import { CameraPreview } from '@capacitor-community/camera-preview';
@@ -168,6 +169,19 @@ async function stopSpeaking() {
   try { await TextToSpeech.stop(); } catch (e) { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e2) { /* ignore */ } }
 }
 
+// ---- Device integrity (android/.../DeviceIntegrityPlugin.java) ----
+// Reports, never decides: the server blocks a punch on mock=true (BRD R10 fake GPS).
+const DeviceIntegrity = registerPlugin('DeviceIntegrity');
+async function mockLocationCheck() {
+  try { return { ok: true, ...(await DeviceIntegrity.mockLocation()) }; }
+  catch (err) { return { ok: false, error: (err && err.message) || 'unavailable' }; }
+}
+// Clock that can't be changed by the user (for offline punches, R19).
+async function deviceClock() {
+  try { return { ok: true, ...(await DeviceIntegrity.clock()) }; }
+  catch (err) { return { ok: false, error: (err && err.message) || 'unavailable' }; }
+}
+
 async function getPosition() {
   try {
     const perm = await Geolocation.requestPermissions().catch(() => null);
@@ -196,4 +210,4 @@ async function minimizeApp() {
   try { await App.minimizeApp(); } catch (err) { /* web/dev fallback: no-op */ }
 }
 
-window.TSGNative = { takeSelfie, scanQrCode, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };
+window.TSGNative = { mockLocationCheck, deviceClock, takeSelfie, scanQrCode, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };

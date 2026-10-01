@@ -1048,18 +1048,63 @@ async function doPunch() {
   const area = document.getElementById('punchArea');
   area.innerHTML = spinnerRow(t('checkingLocation'));
   const pos = await window.TSGNative.getPosition();
-  if (!pos.ok) { toast(t('punchBlocked') + ': ' + pos.error, 'error'); renderWorkerHome(); return; }
+  if (!pos.ok) { showResult(false, 'लोकेशन नहीं मिली', 'Location not available', [pos.error]); return; }
+  // Fake-GPS signal from the phone (BRD R10); the server decides what to do with it.
+  const integrity = window.TSGNative.mockLocationCheck ? await window.TSGNative.mockLocationCheck() : { ok: false };
+  const selfieSmall = await shrinkDataUrl(selfie.dataUrl, 960, 0.8); // rule 9: weak networks
 
+  const payload = { type, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, selfieDataUrl: selfieSmall,
+    integrity: integrity.ok ? { mock: !!integrity.mock, legacyMockSetting: !!integrity.legacyMockSetting, fixesChecked: integrity.fixesChecked } : null };
   try {
-    const result = await window.Api.punch({ type, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, selfieDataUrl: selfie.dataUrl });
-    toast(t('punchAccepted') + (type === 'in' ? ' — ' + t('punchIn') : ' — ' + t('punchOut')), 'success');
-    renderWorkerHome();
+    const result = await window.Api.punch(payload);
+    punchDoneResult(type, result.ts, openIn);
   } catch (e) {
-    const d = e.data || {};
-    const detail = d.distanceM != null ? ` (${d.distanceM}m away, accuracy ${Math.round(d.accuracy||0)}m)` : '';
-    toast(t('punchBlocked') + ': ' + e.message + detail, 'error');
-    renderWorkerHome();
+    // No network (BRD screen 7): keep it on the phone and send within 12 hours.
+    if (e.status === 0 && typeof queueOfflinePunch === 'function') return queueOfflinePunch(payload, w);
+    punchBlockedResult(e);
   }
+}
+
+// ---- Full-screen result, read aloud (BRD §7 rule 7, R11, §11 screens 3/5/6) ----
+function showResult(ok, titleHi, titleEn, lines, onClose) {
+  stopVoice();
+  const el = document.createElement('div');
+  el.className = 'result-screen ' + (ok ? 'ok' : 'bad');
+  el.innerHTML = `
+    <div class="result-mark">${ok ? '✓' : '✕'}</div>
+    <div class="result-title">${bi(esc(titleHi), esc(titleEn))}</div>
+    ${(lines || []).filter(Boolean).map(l => `<div class="result-line">${l}</div>`).join('')}
+    <button class="btn secondary result-close">${bi('ठीक है', 'OK')}</button>`;
+  document.body.appendChild(el);
+  const close = () => { el.remove(); stopVoice(); if (onClose) onClose(); else renderWorkerHome(); };
+  el.querySelector('.result-close').onclick = close;
+  speak(`${titleHi}. ${(lines || []).map(l => String(l).replace(/<[^>]+>/g, '')).join('. ')}`, `${titleEn}. ${(lines || []).map(l => String(l).replace(/<[^>]+>/g, '')).join('. ')}`, true);
+  return el;
+}
+function punchDoneResult(type, ts, openIn) {
+  if (type === 'in') {
+    showResult(true, 'पंच इन हो गया', 'Punched in', [`${bi('समय', 'Time')}: <b>${fmtTime(ts)}</b>`]);
+  } else {
+    const hours = openIn ? Math.round((ts - openIn.ts) / 360000) / 10 : null;
+    showResult(true, 'पंच आउट हो गया', 'Punched out', [
+      `${bi('समय', 'Time')}: <b>${fmtTime(ts)}</b>`,
+      hours != null ? `${bi('काम के घंटे', 'Hours worked')}: <b>${hours}</b>` : '',
+    ]);
+  }
+}
+const BLOCK_REASON = {
+  outside_geofence: ['आप साइट से बाहर हैं', 'You are outside the site'],
+  low_accuracy: ['GPS कमज़ोर है — खुली जगह में जाएँ', 'Weak GPS — move to an open area'],
+  device_mismatch: ['यह आपका रजिस्टर्ड फ़ोन नहीं है', 'This is not your registered phone'],
+  face_mismatch: ['चेहरा मेल नहीं खाया', "Face didn't match"],
+  spoof_suspected: ['असली सेल्फ़ी लें, फोटो की फोटो नहीं', 'Take a live selfie, not a photo of a photo'],
+  fake_gps: ['नकली लोकेशन ऐप बंद करें', 'Turn off the fake-location app'],
+};
+function punchBlockedResult(e) {
+  const d = e.data || {};
+  const [hi, en] = BLOCK_REASON[d.reason] || ['पंच नहीं हुआ', 'Punch not saved'];
+  const detail = d.distanceM != null ? `${d.distanceM} m · GPS ±${Math.round(d.accuracy || 0)} m` : '';
+  showResult(false, hi, en, [esc(e.message), detail, d.reason ? bi('साइट HR को सूचना दी गई', 'Site HR / Security informed') : '']);
 }
 
 function renderWorkerAttendance() {
