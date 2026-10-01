@@ -1034,13 +1034,15 @@ function renderHrDashboard() {
 
 function renderHrApprovals() {
   const s = requireHr(); if (!s) return;
-  withLoading(() => window.Api.listWorkers(), (all) => {
+  withLoading(() => Promise.all([window.Api.listWorkers(), window.Api.listReportingManagers()]), ([all, managers]) => {
+    window._knownManagers = managers;
     const pending = all.filter(w => w.status === 'pending' || w.status === 'sent_back');
     renderShell(`
       <div class="card">
         <h3>${t('pendingApprovals')}</h3>
+        <datalist id="mgrEmails">${managers.map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join('')}</datalist>
         ${pending.length === 0 ? emptyState(t('noData'), 'check') : pending.map(w => `
-          <div class="approval-row">
+          <div class="approval-row" id="approvalRow_${w.id}">
             <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${w.photo_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
             <div class="approval-info">
               <b><a href="javascript:void(0)" onclick="viewWorker('${w.id}')" style="color:inherit">${esc(w.name)}</a></b> ${statusBadge(w.status)}<br/>
@@ -1058,8 +1060,41 @@ function renderHrApprovals() {
     `);
   });
 }
-async function hrApprove(id) {
-  try { await window.Api.approveWorker(id); toast('Approved', 'success'); renderHrApprovals(); }
+// R08: approval needs the worker's reporting manager, so "Approve" opens a small form
+// under the row instead of approving straight away.
+function hrApprove(id) {
+  const row = document.getElementById('approvalRow_' + id); if (!row) return;
+  if (document.getElementById('mgrForm_' + id)) return;
+  const form = document.createElement('div');
+  form.id = 'mgrForm_' + id;
+  form.className = 'worker-summary';
+  form.style.width = '100%';
+  form.innerHTML = reportingManagerFields(id, {}) + `
+    <div class="wizard-actions">
+      <button class="btn secondary small" onclick="document.getElementById('mgrForm_${id}').remove()">${t('cancel')}</button>
+      <button class="btn primary small" onclick="hrConfirmApprove('${id}')">${t('approve')}</button>
+    </div>`;
+  row.after(form);
+}
+function reportingManagerFields(id, current) {
+  return `
+    <label>Reporting manager email</label>
+    <input id="mgrEmail_${id}" class="input" list="mgrEmails" value="${esc(current.email || '')}" placeholder="manager@thesachdevgroup.com" oninput="fillManagerName('${id}')" />
+    <label>Reporting manager name</label>
+    <input id="mgrName_${id}" class="input" value="${esc(current.name || '')}" />`;
+}
+// Picking a known manager's email from the list fills their name in.
+function fillManagerName(id) {
+  const email = document.getElementById('mgrEmail_' + id).value.trim().toLowerCase();
+  const known = (window._knownManagers || []).find(m => m.email === email);
+  const nameEl = document.getElementById('mgrName_' + id);
+  if (known && !nameEl.value) nameEl.value = known.name;
+}
+function readManagerFields(id) {
+  return { reportingManagerEmail: document.getElementById('mgrEmail_' + id).value.trim(), reportingManagerName: document.getElementById('mgrName_' + id).value.trim() };
+}
+async function hrConfirmApprove(id) {
+  try { await window.Api.approveWorker(id, readManagerFields(id)); toast('Approved', 'success'); renderHrApprovals(); }
   catch (e) { toast(e.message, 'error'); }
 }
 async function hrSendBack(id) {
@@ -1108,6 +1143,10 @@ function renderHrAttendance() {
     }
   );
 }
+async function hrSaveManager(id) {
+  try { await window.Api.setReportingManager(id, readManagerFields(id)); toast('Reporting manager updated', 'success'); renderHrWorkerDetail(); }
+  catch (e) { toast(e.message, 'error'); }
+}
 function viewWorker(id) {
   window._viewWorkerId = id;
   location.hash = '#/hr/worker';
@@ -1137,7 +1176,13 @@ function renderHrWorkerDetail() {
             <tr><td class="muted">${t('doj')}</td><td>${esc(w.doj||'-')}</td></tr>
             <tr><td class="muted">Aadhaar</td><td>${w.aadhaar_masked ? esc(w.aadhaar_masked) : '—'}</td></tr>
             <tr><td class="muted">PAN</td><td>${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '—'}</td></tr>
+            <tr><td class="muted">Reporting manager</td><td>${w.reporting_manager_email ? `${esc(w.reporting_manager_name || '')}<br/><span class="muted small">${esc(w.reporting_manager_email)}</span>` : '—'}</td></tr>
           </table>
+          ${hasPerm('workers.manage') ? `
+            <details><summary class="link-btn">Change reporting manager</summary>
+              ${reportingManagerFields(w.id, { name: w.reporting_manager_name, email: w.reporting_manager_email })}
+              <button class="btn primary small" onclick="hrSaveManager('${w.id}')">${t('save')}</button>
+            </details>` : ''}
         </div>
         <div class="card">
           <h3>${t('comparePhotos')}</h3>

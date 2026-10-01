@@ -83,7 +83,9 @@ const Api = {
   // ---- HR: workers ----
   listWorkers: (status) => apiFetch('/api/workers' + (status ? `?status=${encodeURIComponent(status)}` : '')),
   getWorkerById: (id) => apiFetch('/api/workers/' + id),
-  approveWorker: (id) => apiFetch(`/api/workers/${id}/approve`, { method: 'POST' }),
+  approveWorker: (id, manager) => apiFetch(`/api/workers/${id}/approve`, { method: 'POST', body: manager }),
+  setReportingManager: (id, manager) => apiFetch(`/api/workers/${id}/reporting-manager`, { method: 'PUT', body: manager }),
+  listReportingManagers: () => apiFetch('/api/workers/meta/reporting-managers'),
   sendBackWorker: (id, reason) => apiFetch(`/api/workers/${id}/send-back`, { method: 'POST', body: { reason } }),
   rejectWorker: (id) => apiFetch(`/api/workers/${id}/reject`, { method: 'POST' }),
 
