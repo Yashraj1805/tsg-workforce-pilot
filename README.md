@@ -12,37 +12,41 @@ when prompted.
 and, on first launch, enter its address under "Server settings" — the phone needs a
 network path to wherever it's running (see below).
 
-## What's real vs. still simulated
+## What the app does (BRD v1.0 screens + design rules)
 
-Real:
-- Live camera capture for the profile photo and every punch selfie (gallery upload
-  blocked, per FR-K05).
-- Real GPS, checked **server-side** against the worker's assigned location (the app
-  can no longer fake this by editing local data — the backend recomputes distance
-  itself).
-- Full worker lifecycle over the network: self-registration → HR approval → gated
-  punch-in/out → attendance register; HR approvals, regularisation (maker ≠ checker
-  enforced server-side), exceptions log, vendor/location masters, audit log, AI Time
-  Guard pattern alerts.
-- Worker and HR devices now see the **same shared data** — this was the pilot's
-  biggest earlier gap.
-- Real OTP login flow (generate → verify → JWT) — see "What's not wired up" for what's
-  missing from it.
-- Real Setu (Pinelabs) Aadhaar (DigiLocker) + PAN verification calls, built against
-  Setu's actual current API contract — see the backend README for exactly what's
-  tested vs. what still needs real credentials.
+Worker (Hindi first, English below; every screen read aloud — voice can be switched off in Menu):
+- Login with mobile + OTP (resend after 30 s; server locks 15 min after 3 wrong OTPs).
+- Registration in 8 one-task screens (BRD §10): consent (versioned, read aloud) → live
+  photo (server checks one live face) → **Aadhaar QR scan** (fills name, DOB, gender,
+  father's name, address) → **PAN photo** (number read automatically) + Aadhaar OTP via
+  DigiLocker → job tiles → vendor tiles + **site found by GPS** → education/experience
+  tiles → review & submit.
+- Punch in/out: inside/outside site shown automatically, hands-free face capture, fake-GPS
+  signal sent, full-screen green tick / red cross read aloud, hours worked on punch-out.
+- **No network**: inside the site the punch is saved on the phone and sent within 12 h
+  with its real time (Android's tamper-proof clock).
+- **My days** calendar (green / red / yellow / grey); missed punch → call Site HR.
 
-Still simulated / not wired up:
-- **OTP delivery** — the backend generates and verifies real OTPs but doesn't send
-  them anywhere yet (no SMS/email provider sourced). In dev mode the OTP is shown
-  directly on the "enter OTP" screen so the flow is testable end-to-end.
-- **Face-match/liveness on punch selfies** — still nobody's confirmed a vendor for
-  this. The selfie is captured and stored but not verified against anything.
-- **Setu credentials** — the KYC screens call the real Setu sandbox endpoints, but
-  until `SETU_CLIENT_ID`/`SECRET`/`PRODUCT_INSTANCE_ID` are set in the backend's
-  `.env`, they'll return a clear "not configured" error instead of succeeding.
-- Mock-GPS/rooted-device detection, HRMS/Zoho/WATI integration, report exports,
-  India hosting/backups, legal sign-off on the DPDP consent flow.
+Admin portal (each role sees only its screens — see backend README "Roles and access"):
+dashboard with brand/vendor filters, approvals (face-check result, reporting manager),
+workers directory, worker detail (day-wise history with selfie + map, transfer / exit /
+blacklist / phone change, change requests), attendance, missed punches, exceptions,
+Time Guard, vendor bill check + month lock, Excel reports, automatic emails, gate check
+(Security), gate tablets, masters (vendors with contract dates, sites with weekly off,
+jobs), users, audit log, database backups. Site HR can register a worker on their own
+phone with the worker's OTP and face.
+
+**Gate tablet (kiosk) mode** — splash → "Gate tablet (kiosk)" → pairing code from HR.
+Workers without phones type the last 4 digits of their mobile, tap their photo and
+look at the camera.
+
+Native pieces (`src/native.js` + `android/.../DeviceIntegrityPlugin.java`): camera,
+ML Kit QR scanner, rear-camera document photos, live face preview, GPS, mock-location
+flag, tamper-proof clock, Android text-to-speech.
+
+Needs outside setup before go-live: see the backend README (Setu, UIDAI certificate,
+SMS, SMTP, WATI, hosting, legal sign-off of the consent text). Until then OTPs show
+on screen in dev mode and KYC can be skipped with the dev-only button.
 
 ## Connecting the app to the backend
 
@@ -97,8 +101,9 @@ clearing app data to see the setup screen again.
 
 ## Rebuilding the APK
 
-Requires Node.js, JDK 17, and an Android SDK (this machine already has
-`C:\Users\Galaxy\Android` with platform 34 / build-tools 34.0.0 / Gradle 8.7).
+Requires Node.js, JDK 17 and an Android SDK (platform 34, build-tools 34). Point
+`android/local.properties` at the SDK with forward slashes, e.g.
+`sdk.dir=C:/Users/<you>/android-sdk`, and set `JAVA_HOME` to the JDK.
 
 ```
 npm install
@@ -109,22 +114,17 @@ This bundles `src/native.js`, copies `www/` into the Android project
 (`npx cap sync android`), and runs a debug Gradle build. The output APK is at
 `android/app/build/outputs/apk/debug/app-debug.apk`.
 
+To test on a phone over USB when phone and PC aren't on the same Wi-Fi:
+`adb reverse tcp:4000 tcp:4000`, then use `http://localhost:4000` as the server.
+
 ## What a production build still needs on top of this
 
-Straight from the BRD's own scope and open questions, now scoped against real code:
-1. A face-match/liveness vendor — still completely unsourced, and the single biggest
-   gap versus the BRD's core anti-fraud requirement (BR-02).
-2. Real Setu credentials, then live sandbox testing of the DigiLocker/PAN flows.
-3. An SMS gateway (worker OTP) and email provider (HR OTP) — currently OTPs work but
-   aren't delivered anywhere.
-4. Mock-GPS/rooted-device detection — needs native Android checks, not doable in a
-   plain web view.
-5. HRMS, Zoho Books and WATI integrations, MIS report exports (Excel/PDF), data
-   hosted in India with backups, DPDP Act consent/notice text signed off by legal,
-   and Aadhaar Data Vault-compliant storage (the backend currently stores only the
-   masked number from Setu, which is the right shape, but hasn't been reviewed by
-   legal).
-6. HTTPS between the app and backend, and restricting `usesCleartextTraffic` — fine
-   for a LAN dev setup, not for anything real.
-7. The open questions the BRD lists on its last page (build vs. buy, half-day
-   threshold, vendor coordinator access, KYC budget owner) still need answers.
+1. Real Setu credentials, then live sandbox testing of the DigiLocker/PAN flows.
+2. SMS gateway + SMTP + WATI accounts (backend `.env`) — OTPs and emails are only
+   logged until then.
+3. A certified face-match/liveness API if Gemini's judgement isn't accepted for go-live.
+4. HTTPS between app and backend, then remove `usesCleartextTraffic` from the manifest.
+5. A release-signed APK (this builds a debug APK).
+6. Legal sign-off of the consent text; hosting in India; HRMS / Zoho Books links if wanted.
+7. The BRD's open points (build vs. buy, split shifts / more than 2 punches, half-day
+   rule per location, KYC budget owner).
