@@ -778,11 +778,25 @@ async function doPunch() {
   const pos = await window.TSGNative.getPosition();
   if (!pos.ok) { toast(t('punchBlocked') + ': ' + pos.error, 'error'); renderWorkerHome(); return; }
 
+  const punchPayload = { type, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, isMockLocation: pos.isMockLocation, selfieDataUrl: selfie.dataUrl };
   try {
-    const result = await window.Api.punch({ type, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, isMockLocation: pos.isMockLocation, selfieDataUrl: selfie.dataUrl });
+    const result = await window.Api.punch(punchPayload);
     renderWorkerHome();
     showResultScreen(true, t('punchAccepted'), type === 'in' ? t('punchIn') : t('punchOut'));
   } catch (e) {
+    // R19: offline, but inside the geofence (checked here on-device, since there's no
+    // server to check it right now) — queue it instead of just failing. Anything else
+    // (outside site, blocked, validation error) is a real rejection, not a connectivity
+    // problem, so it still fails normally.
+    if (e.status === 0 && getApiBase() && w.location) {
+      const distanceM = haversineMeters(pos.lat, pos.lng, w.location.lat, w.location.lng);
+      if (distanceM <= w.location.radius) {
+        window.OfflineQueue.queueOfflinePunch(punchPayload);
+        renderWorkerHome();
+        showResultScreen(true, t('offlinePunchSaved'), t('offlinePunchHint'));
+        return;
+      }
+    }
     const d = e.data || {};
     const detail = d.distanceM != null ? ` (${d.distanceM}m away, accuracy ${Math.round(d.accuracy||0)}m)` : '';
     renderWorkerHome();
@@ -1015,6 +1029,20 @@ setInterval(() => {
     toast(t('hrIdleLoggedOut'), 'info');
   }
 }, 30000);
+
+// ---------------- Offline punch sync (R19) ----------------
+// Retried on a timer (in case 'online' never fires reliably on this device/WebView) and
+// immediately when the OS reports connectivity back — whichever happens first.
+async function trySyncOfflineQueue() {
+  if (!getApiBase() || !window.OfflineQueue.getOfflineQueue().length) return;
+  try {
+    const result = await window.OfflineQueue.syncOfflineQueue();
+    if (result.synced > 0) toast(`${t('offlineSynced')} (${result.synced})`, 'success');
+  } catch (e) { /* best-effort — next trigger will retry */ }
+}
+window.addEventListener('online', trySyncOfflineQueue);
+setInterval(trySyncOfflineQueue, 60000);
+trySyncOfflineQueue();
 
 // ---------------- HR: dashboard ----------------
 

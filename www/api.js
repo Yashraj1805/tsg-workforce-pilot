@@ -27,6 +27,40 @@ function getSession() {
 function setSessionData(s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
 function clearSessionData() { localStorage.removeItem(SESSION_KEY); }
 
+// ---------------- Offline punch queue (R19) ----------------
+// BRD screen 7: "No network ... Allowed only inside the site. Send within 12 hours with
+// the original time." The caller (app.js) is responsible for the "inside the site"
+// check before queuing — this just persists and replays the request itself.
+const OFFLINE_QUEUE_KEY = 'tsg_offline_queue';
+function getOfflineQueue() {
+  try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); } catch (e) { return []; }
+}
+function queueOfflinePunch(punchData) {
+  const q = getOfflineQueue();
+  q.push({ id: 'off_' + Date.now() + '_' + Math.random().toString(36).slice(2), capturedAt: Date.now(), data: punchData });
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(q));
+}
+async function syncOfflineQueue() {
+  const q = getOfflineQueue();
+  if (!q.length) return { synced: 0, expired: 0, stillQueued: 0 };
+  const remaining = [];
+  let synced = 0, expired = 0;
+  for (const item of q) {
+    try {
+      await apiFetch('/api/punches', { method: 'POST', body: { ...item.data, deviceId: getDeviceId(), capturedAt: item.capturedAt, offline: true } });
+      synced++;
+    } catch (e) {
+      // status 0 means still unreachable — keep it queued and retry later. Any real
+      // response from the server (rejected, expired, already punched) is final —
+      // retrying it forever would never succeed, so drop it instead of looping on it.
+      if (e.status === 0) remaining.push(item);
+      else expired++;
+    }
+  }
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(remaining));
+  return { synced, expired, stillQueued: remaining.length };
+}
+
 class ApiError extends Error {
   constructor(message, status, data) { super(message); this.status = status; this.data = data; }
 }
@@ -119,3 +153,4 @@ const Api = {
 
 window.Api = Api;
 window.ApiSession = { getApiBase, setApiBase, getSession, setSessionData, clearSessionData, getDeviceId };
+window.OfflineQueue = { getOfflineQueue, queueOfflinePunch, syncOfflineQueue };
