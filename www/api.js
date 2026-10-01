@@ -106,6 +106,7 @@ const Api = {
   workerOtpVerify: (mobile, otp) => apiFetch('/api/auth/worker/otp/verify', { method: 'POST', body: { mobile, otp } }),
   hrOtpRequest: (email) => apiFetch('/api/auth/hr/otp/request', { method: 'POST', body: { email } }),
   hrOtpVerify: (email, otp, name) => apiFetch('/api/auth/hr/otp/verify', { method: 'POST', body: { email, otp, name } }),
+  kioskActivate: (locationId) => apiFetch('/api/auth/kiosk/activate', { method: 'POST', body: { locationId } }),
 
   // ---- Worker profile ----
   getMe: () => apiFetch('/api/workers/me'),
@@ -149,6 +150,10 @@ const Api = {
 
   // ---- Audit ----
   listAudit: () => apiFetch('/api/audit'),
+
+  // ---- Kiosk (R20) ----
+  kioskIdentify: (frameDataUrl) => apiFetch('/api/kiosk/identify', { method: 'POST', body: { frameDataUrl } }),
+  kioskPunch: (workerId, selfieDataUrl) => apiFetch('/api/kiosk/punch', { method: 'POST', body: { workerId, selfieDataUrl } }),
 };
 
 window.Api = Api;

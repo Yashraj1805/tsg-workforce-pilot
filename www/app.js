@@ -293,6 +293,7 @@ function renderSplash() {
       <button class="btn primary block" onclick="startWorkerLogin()">${t('roleWorker')}</button>
       <button class="btn secondary block" onclick="startHrLogin()">${t('roleHr')}</button>
       <button class="link-btn small" style="margin-top:16px" onclick="location.hash='#/settings';render()">${t('serverSettings')}</button>
+      <button class="link-btn small" onclick="startKioskSetup()">${t('kioskSetupLink')}</button>
     </div>
   `);
 }
@@ -1013,7 +1014,9 @@ async function hrRequestOtp() {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Enter a valid email', 'error'); return; }
   try {
     const result = await window.Api.hrOtpRequest(email);
-    loginState = { step: 'otp', email, name };
+    // Carry kiosk setup/exit through — this fully replaces loginState, so without this
+    // the flag startKioskSetup()/startKioskExit() set would be silently lost here.
+    loginState = { step: 'otp', email, name, kioskSetup: loginState.kioskSetup, kioskExit: loginState.kioskExit };
     renderShell(`
       <div class="card center-card">
         <h3>${t('enterOtp')}</h3>
@@ -1028,10 +1031,146 @@ async function hrVerifyOtp() {
   const otp = document.getElementById('hrOtp').value.trim();
   try {
     const result = await window.Api.hrOtpVerify(loginState.email, otp, loginState.name);
+    // Kiosk setup/exit (R20) piggyback on the same HR OTP flow rather than duplicating
+    // it — only the step after verification differs.
+    if (loginState.kioskExit) {
+      kioskRunning = false;
+      await window.TSGNative.stopFacePreview();
+      document.body.classList.remove('scanning-active');
+      document.documentElement.style.background = '';
+      const overlay = document.querySelector('.scan-overlay');
+      if (overlay) overlay.remove();
+      clearSessionData();
+      loginState = {};
+      location.hash = '#/'; render();
+      toast(t('kioskExited'), 'success');
+      return;
+    }
+    if (loginState.kioskSetup) {
+      setSessionData({ token: result.token, role: 'hr' }); // temporary — just enough auth to call kioskActivate
+      loginState = {};
+      renderKioskPickLocation();
+      return;
+    }
     setSessionData({ token: result.token, role: 'hr', email: loginState.email, name: result.hrUser.name });
     loginState = {}; // otherwise a stale step:'otp' would hijack the back button deep in the app later
     location.hash = '#/hr/dashboard'; render();
   } catch (e) { toast(e.message, 'error'); }
+}
+
+function startKioskSetup() { startHrLogin(); loginState.kioskSetup = true; }
+async function startKioskExit() {
+  kioskRunning = false;
+  await window.TSGNative.stopFacePreview();
+  document.body.classList.remove('scanning-active');
+  document.documentElement.style.background = '';
+  const overlay = document.querySelector('.scan-overlay');
+  if (overlay) overlay.remove();
+  startHrLogin();
+  loginState.kioskExit = true;
+}
+async function renderKioskPickLocation() {
+  await withLoading(
+    () => window.Api.listLocations(),
+    (locations) => {
+      renderShell(`
+        <div class="card center-card">
+          <h3>${t('kioskPickLocationTitle')}</h3>
+          <p class="muted small">${t('kioskPickLocationHint')}</p>
+          ${locations.length === 0 ? emptyState(t('none'), 'building') : locations.map(l => `
+            <button class="btn secondary block" onclick="selectKioskLocation('${l.id}')">${esc(l.name)}</button>
+          `).join('')}
+        </div>
+      `);
+    }
+  );
+}
+async function selectKioskLocation(locationId) {
+  try {
+    const result = await window.Api.kioskActivate(locationId);
+    setSessionData({ token: result.token, role: 'kiosk', locationId: result.location.id, locationName: result.location.name });
+    location.hash = '#/kiosk/scan'; render();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ---------------- Kiosk: continuous unattended face-punch loop (R20) ----------------
+let kioskRunning = false;
+function renderKioskScan() {
+  const s = getSession();
+  renderShell(`<div class="card"><h3>${t('kioskTitle')}</h3><p class="muted small">${esc((s && s.locationName) || '')}</p></div>`);
+  startKioskLoop();
+}
+async function startKioskLoop() {
+  if (kioskRunning) return;
+  kioskRunning = true;
+  const startResult = await window.TSGNative.startFacePreview();
+  if (!startResult.ok) { toast(t('kioskCameraError') + ': ' + startResult.error, 'error'); kioskRunning = false; return; }
+  document.documentElement.style.background = 'transparent';
+  document.body.classList.add('scanning-active');
+  const overlay = createScanOverlay();
+  // Repurpose the normal scan overlay's cancel button — an unattended kiosk never
+  // "cancels" a scan, but it still needs a (deliberately unobtrusive) way out for HR.
+  const cancelBtn = overlay.querySelector('#scanCancelBtn');
+  cancelBtn.textContent = t('kioskExit');
+  cancelBtn.onclick = startKioskExit;
+  await new Promise((r) => setTimeout(r, 500));
+  kioskLoopTick(overlay);
+}
+async function kioskLoopTick(overlay) {
+  if (!kioskRunning) return;
+  const s = getSession();
+  if (!s || s.role !== 'kiosk') { kioskRunning = false; return; }
+  const statusEl = overlay.querySelector('#scanStatus');
+  const ringEl = overlay.querySelector('#scanRing');
+
+  const sample = await window.TSGNative.grabPreviewSample();
+  if (!kioskRunning) return;
+  if (!sample.ok) { statusEl.textContent = sample.error; setTimeout(() => kioskLoopTick(overlay), 1000); return; }
+
+  try {
+    const detectResult = await window.Api.detectFace(sample.dataUrl);
+    if (!kioskRunning) return;
+    if (detectResult.faceDetected) {
+      ringEl.classList.add('detected');
+      statusEl.textContent = t('kioskIdentifying');
+      const photo = await window.TSGNative.capturePreviewPhoto();
+      if (!kioskRunning) return;
+      if (!photo.ok) { statusEl.textContent = photo.error; setTimeout(() => kioskLoopTick(overlay), 1000); return; }
+
+      const idResult = await window.Api.kioskIdentify(photo.dataUrl);
+      if (!kioskRunning) return;
+      if (!idResult.matched) {
+        statusEl.textContent = t('kioskNotRecognised');
+        ringEl.classList.remove('detected');
+        setTimeout(() => kioskLoopTick(overlay), 1500);
+        return;
+      }
+      try {
+        const punchResult = await window.Api.kioskPunch(idResult.workerId, photo.dataUrl);
+        await pauseKioskForResult(overlay, true, `${t('kioskWelcome')} ${idResult.name}`, punchResult.type === 'in' ? t('punchIn') : t('punchOut'));
+      } catch (e) {
+        await pauseKioskForResult(overlay, false, idResult.name, e.message);
+      }
+      return; // pauseKioskForResult restarts the loop itself once the result clears
+    }
+    statusEl.textContent = detectResult.reason || t('scanHint');
+  } catch (e) {
+    statusEl.textContent = e.message || t('scanHint');
+  }
+  setTimeout(() => kioskLoopTick(overlay), 400);
+}
+async function pauseKioskForResult(overlay, ok, title, subtitle) {
+  overlay.remove();
+  await window.TSGNative.stopFacePreview();
+  document.documentElement.style.background = '';
+  document.body.classList.remove('scanning-active');
+  showResultScreen(ok, title, subtitle);
+  await new Promise((r) => setTimeout(r, 3500)); // auto-dismiss — nobody's expected to tap OK on an unattended kiosk
+  const resultEl = document.querySelector('.result-overlay');
+  if (resultEl) resultEl.remove();
+  kioskRunning = false;
+  const s = getSession();
+  if (s && s.role === 'kiosk') startKioskLoop();
 }
 
 function requireHr() {
@@ -1622,13 +1761,21 @@ function render() {
   let hash = location.hash || '#/';
   if (hash !== '#/settings' && !getApiBase()) { location.hash = hash = '#/settings'; }
   const s = getSession();
+  // A kiosk device is locked to its scan screen (R20 — unattended, not meant to be
+  // browsed) — except mid-exit, where loginState.step drives its own direct renders
+  // outside this router entirely, same as every other login sub-step in this app.
+  if (s && s.role === 'kiosk' && hash !== '#/kiosk/scan' && !(loginState && loginState.step)) {
+    location.hash = hash = '#/kiosk/scan';
+  }
   if (hash === '#/' || hash === '') {
     if (s && s.role === 'worker') { location.hash = hash = '#/w/home'; }
     else if (s && s.role === 'hr') { location.hash = hash = '#/hr/dashboard'; }
+    else if (s && s.role === 'kiosk') { location.hash = hash = '#/kiosk/scan'; }
     else return renderSplash();
   }
   const routes = {
     '#/settings': renderSettings,
+    '#/kiosk/scan': renderKioskScan,
     '#/w/register': renderRegister,
     '#/w/pending': renderPending,
     '#/w/home': renderWorkerHome,
@@ -1702,6 +1849,11 @@ function handleBackButton() {
 
   const s = getSession();
   const hash = location.hash || '#/';
+  // Kiosk mode (R20): back does nothing once set up — this is a mounted, unattended
+  // device, not something a passer-by should be able to navigate out of. Exiting is
+  // only possible through the deliberate HR-OTP exit flow (handled by the loginState
+  // checks above, since that flow drives loginState.step like any other login).
+  if (s && s.role === 'kiosk') return;
   if (!s) {
     if (hash !== '#/') { location.hash = '#/'; render(); return; }
     window.TSGNative.minimizeApp(); // at the true root with nothing to go back to — minimize, don't kill
