@@ -18,7 +18,7 @@ function statusBadge(status) {
     present: ['badge-ok', 'Present'], half_day: ['badge-warn', 'Half day'],
     missed_punch_out: ['badge-warn', 'Missed punch-out'], absent: ['badge-bad', 'Absent'],
     pending: ['badge-warn', 'Pending'], approved: ['badge-ok', 'Approved'],
-    rejected: ['badge-bad', 'Rejected'], sent_back: ['badge-warn', 'Sent back'],
+    rejected: ['badge-bad', 'Rejected'], sent_back: ['badge-warn', 'Sent back'], exited: ['badge-neutral', 'Exited'],
   };
   const [cls, label] = map[status] || ['badge-neutral', status];
   return `<span class="badge ${cls}">${label}</span>`;
@@ -1104,6 +1104,7 @@ function renderHrApprovals() {
               <b><a href="javascript:void(0)" onclick="viewWorker('${w.id}')" style="color:inherit">${esc(w.name)}</a></b> ${statusBadge(w.status)}<br/>
               <span class="muted small">${esc(w.mobile)} · ${esc(w.designation||'')}</span><br/>
               <span class="muted small">Aadhaar: ${w.aadhaar_verified ? '✅' : '⏳'} · PAN: ${w.pan_verified ? '✅' : '⏳'}</span>
+              ${faceCheckLine(w)}
             </div>
             <div class="approval-actions">
               <button class="btn primary small" onclick="hrApprove('${w.id}')">${t('approve')}</button>
@@ -1116,6 +1117,14 @@ function renderHrApprovals() {
     `);
   });
 }
+// R06: result of the server's duplicate/blacklist face check at submit. Anything other
+// than a clean "no match" is highlighted so HR compares the photos before approving.
+function faceCheckLine(w) {
+  if (!w.face_check_note) return '';
+  const clean = /^face check: no match/.test(w.face_check_note);
+  return `<br/><span class="small" style="color:${clean ? 'var(--ok, #16a34a)' : 'var(--warn, #b45309)'}">${clean ? '✅' : '⚠️'} ${esc(w.face_check_note)}</span>`;
+}
+
 // R08: approval needs the worker's reporting manager, so "Approve" opens a small form
 // under the row instead of approving straight away.
 function hrApprove(id) {
@@ -1226,7 +1235,7 @@ function renderHrWorkerDetail() {
               <div class="muted small">${esc(w.mobile)} · ${esc(w.vendor && w.vendor.name || '')} · ${esc(w.location && w.location.name || '')}</div>
             </div>
           </div>
-          <div style="margin-top:10px">${statusBadge(w.status)} ${w.aadhaar_verified ? '<span class="badge badge-ok">Aadhaar ✓</span>' : '<span class="badge badge-warn">Aadhaar pending</span>'} ${w.pan_verified ? '<span class="badge badge-ok">PAN ✓</span>' : '<span class="badge badge-warn">PAN pending</span>'}</div>
+          <div style="margin-top:10px">${statusBadge(w.status)} ${w.aadhaar_verified ? '<span class="badge badge-ok">Aadhaar ✓</span>' : '<span class="badge badge-warn">Aadhaar pending</span>'} ${w.pan_verified ? '<span class="badge badge-ok">PAN ✓</span>' : '<span class="badge badge-warn">PAN pending</span>'} ${w.blacklisted ? '<span class="badge badge-bad">Blacklisted</span>' : ''}${faceCheckLine(w)}</div>
           <table class="tbl" style="margin-top:12px">
             <tr><td class="muted">${t('designation')}</td><td>${esc(w.designation||'-')}</td></tr>
             <tr><td class="muted">${t('doj')}</td><td>${esc(w.doj||'-')}</td></tr>
