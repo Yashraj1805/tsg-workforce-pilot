@@ -258,6 +258,7 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/users', icon: 'user', label: () => 'Users', perms: ['users.manage'], nav: true },
   { hash: '#/hr/audit', icon: 'ledger', label: () => t('hrAudit'), perms: ['audit.read'], nav: true },
   { hash: '#/hr/workers', icon: 'user', label: () => 'Workers', perms: ['workers.read'] },
+  { hash: '#/hr/billing', icon: 'ledger', label: () => 'Vendor bill check', perms: ['billing.read'] },
   { hash: '#/hr/timeguard', icon: 'shield', label: () => t('timeGuard'), perms: ['workers.read', 'punches.read'] },
   { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
@@ -1716,6 +1717,82 @@ async function addLocation() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// ---------------- R16: vendor bill check + month-end lock ----------------
+// System days (computed by the server from punches + approved corrections) against what
+// each vendor invoiced; any gap is highlighted. Finance enters invoice days once Central
+// HR has locked the month.
+function lastMonthStr() { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); }
+const BILL_STATUS = {
+  overbilled: ['badge-bad', 'Overbilled'], underbilled: ['badge-warn', 'Underbilled'],
+  match: ['badge-ok', 'Matches'], no_invoice: ['badge-neutral', 'No invoice yet'],
+};
+function renderHrBilling() {
+  const s = requireHr(); if (!s) return;
+  const month = window._billMonth || lastMonthStr();
+  withLoading(() => window.Api.vendorBill(month), (data) => {
+    const canEdit = hasPerm('billing.write') && data.locked;
+    renderShell(`
+      <div class="card">
+        <h3>Vendor bill check</h3>
+        <p class="muted small">Vendors are paid only on system days. Gap = invoice days − system days.</p>
+        <input type="month" class="input" value="${month}" max="${todayStr(Date.now()).slice(0, 7)}" onchange="window._billMonth=this.value;renderHrBilling()" />
+        <div class="gps-status ${data.locked ? 'ok' : 'warn'}" style="margin:8px 0">
+          ${data.locked ? `🔒 Attendance locked by ${esc(data.lock.locked_by)} on ${new Date(data.lock.locked_at).toLocaleDateString()}` : '🔓 Attendance not locked yet — Central HR locks the month, then invoices are entered'}
+          ${hasPerm('attendance.lock') ? (data.locked
+            ? `<button class="btn secondary small" style="margin-top:6px" onclick="billUnlock('${month}')">Unlock</button>`
+            : `<button class="btn primary small" style="margin-top:6px" onclick="billLock('${month}')">Lock ${month}</button>`) : ''}
+        </div>
+        ${data.rows.length === 0 ? emptyState(t('noData'), 'ledger') : `
+        <table class="tbl">
+          <thead><tr><th>${t('vendor')}</th><th>Workers</th><th>System days</th><th>Invoice days</th><th>Gap</th><th></th></tr></thead>
+          <tbody>${data.rows.map(r => `<tr>
+            <td><a href="javascript:void(0)" onclick="billDetail('${r.vendorId}','${esc(r.vendorName)}')">${esc(r.vendorName)}</a></td>
+            <td>${r.workers}</td>
+            <td><b>${r.systemDays}</b></td>
+            <td>${canEdit
+              ? `<input id="inv_${r.vendorId}" class="input" type="number" step="0.5" min="0" style="width:80px;margin:0" value="${r.invoiceDays ?? ''}" />
+                 <button class="btn secondary small" onclick="billSaveInvoice('${r.vendorId}','${month}')">${t('save')}</button>`
+              : (r.invoiceDays ?? '—')}</td>
+            <td>${r.gap == null ? '' : `<b style="color:${r.gap > 0 ? 'var(--bad, #b91c1c)' : r.gap < 0 ? 'var(--warn, #b45309)' : 'inherit'}">${r.gap > 0 ? '+' : ''}${r.gap}</b>`}</td>
+            <td><span class="badge ${BILL_STATUS[r.status][0]}">${BILL_STATUS[r.status][1]}</span></td>
+          </tr>`).join('')}</tbody>
+        </table>
+        <button class="btn secondary small" style="margin-top:8px" onclick="billDownload('${month}')">Download (Excel CSV)</button>`}
+        <div id="billDetail"></div>
+      </div>
+    `);
+  });
+}
+async function billLock(month) {
+  if (!confirm(`Lock attendance for ${month}? No more corrections can be made for this month.`)) return;
+  try { await window.Api.lockMonth(month); toast('Month locked', 'success'); renderHrBilling(); } catch (e) { toast(e.message, 'error'); }
+}
+async function billUnlock(month) {
+  const reason = prompt('Reason for unlocking ' + month + '?'); if (!reason) return;
+  try { await window.Api.unlockMonth(month, reason); toast('Month unlocked', 'success'); renderHrBilling(); } catch (e) { toast(e.message, 'error'); }
+}
+async function billSaveInvoice(vendorId, month) {
+  const v = document.getElementById('inv_' + vendorId).value;
+  if (v === '') { toast('Enter the invoice days', 'error'); return; }
+  try { await window.Api.saveVendorInvoice({ vendorId, month, invoiceDays: Number(v) }); toast('Invoice days saved', 'success'); renderHrBilling(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+async function billDetail(vendorId, vendorName) {
+  const month = window._billMonth || lastMonthStr();
+  const el = document.getElementById('billDetail');
+  el.innerHTML = spinnerRow('Loading…');
+  try {
+    const d = await window.Api.vendorBillWorkers(vendorId, month);
+    el.innerHTML = `<h3 style="margin-top:16px">${esc(vendorName)} — day-wise</h3>
+      <table class="tbl"><thead><tr><th>${t('worker')}</th><th>Days</th><th>Dates</th></tr></thead>
+      <tbody>${d.rows.map(r => `<tr><td>${esc(r.name)}</td><td>${r.days}</td><td class="small">${esc(r.dates)}</td></tr>`).join('')}</tbody></table>`;
+  } catch (e) { el.innerHTML = errorState(e.message); }
+}
+async function billDownload(month) {
+  try { await window.Api.downloadCsv('/api/reports/vendor-bill?format=csv&month=' + month, `vendor-bill-check-${month}.csv`); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
 // ---------------- System Admin: admin-portal users ----------------
 // Create users with a role and, for location/vendor-scoped roles, the site or vendor
 // they can see. Which roles need which scope comes from the server (/admin-users/roles).
@@ -1891,6 +1968,7 @@ function render() {
     '#/hr/worker': renderHrWorkerDetail,
     '#/hr/users': renderHrUsers,
     '#/hr/workers': renderHrWorkers,
+    '#/hr/billing': renderHrBilling,
     '#/hr/logout-confirm': renderHrLogoutConfirm,
   };
   const fn = routes[hash];

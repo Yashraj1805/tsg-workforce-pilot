@@ -127,6 +127,24 @@ const Api = {
   // ---- Audit ----
   listAudit: () => apiFetch('/api/audit'),
 
+  // ---- Reports: vendor bill check (R16) + month lock ----
+  vendorBill: (month) => apiFetch('/api/reports/vendor-bill?month=' + encodeURIComponent(month)),
+  vendorBillWorkers: (vendorId, month) => apiFetch(`/api/reports/vendor-bill/${vendorId}/workers?month=${encodeURIComponent(month)}`),
+  saveVendorInvoice: (body) => apiFetch('/api/reports/vendor-invoices', { method: 'PUT', body }),
+  lockMonth: (month) => apiFetch('/api/reports/attendance-lock', { method: 'POST', body: { month } }),
+  unlockMonth: (month, reason) => apiFetch('/api/reports/attendance-lock/' + month, { method: 'DELETE', body: { reason } }),
+  // CSV reports: fetched with the session token (a plain link can't send it) and handed
+  // to the browser as a file download.
+  async downloadCsv(path, filename) {
+    const session = getSession();
+    const res = await fetch(getApiBase() + path, { headers: session ? { Authorization: 'Bearer ' + session.token } : {} });
+    if (!res.ok) throw new ApiError(`Download failed (${res.status})`, res.status);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  },
+
   // ---- Admin users (System Admin) ----
   listAdminRoles: () => apiFetch('/api/admin-users/roles'),
   listAdminUsers: () => apiFetch('/api/admin-users'),
