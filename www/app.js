@@ -609,6 +609,8 @@ function regAadhaar() {
       ${regState.aadhaarNameWarning ? `<div class="gps-status bad">Name on Aadhaar is "${esc(regState.aadhaarNameWarning)}" — your name below must match it.
         <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">Use Aadhaar name</button></div>` : ''}
       <button class="btn ${w.aadhaar_qr_at ? 'secondary' : 'primary'} block big" onclick="regScanAadhaar()">📷 ${w.aadhaar_qr_at ? bi('फिर से स्कैन करें', 'Scan again') : bi('आधार QR स्कैन करें', 'Scan Aadhaar QR')}</button>
+      ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('QR नहीं पढ़ा गया। आधार का QR बहुत घना होता है — उसकी साफ़ फोटो लें: कार्ड सीधा रखें, QR फोटो में बड़ा दिखे, रोशनी अच्छी हो, चमक न हो।', "Couldn't read the QR. The Aadhaar QR is very dense — take a clear photo of it instead: card flat, QR large in the photo, good light, no glare.")}</div>` : ''}
+      <button class="btn ${regState.qrHelp ? 'primary' : 'secondary'} block" onclick="regPhotoAadhaarQr()">🖼️ ${bi('QR की फोटो लें', 'Take a photo of the QR instead')}</button>
       ${w.aadhaar_qr_at || w.name ? `
         <label>${t('fullName')}</label><input id="f_name" class="input" value="${esc(w.name||'')}" />
         <label>${t('fatherName')}</label><input id="f_father" class="input" value="${esc(w.father_name||'')}" />
@@ -627,16 +629,37 @@ function regAadhaar() {
 // R04: the server decodes the QR, keeps only the masked number, and fills empty fields.
 async function regScanAadhaar() {
   const scan = await window.TSGNative.scanQrCode();
-  if (!scan.ok) { if (!scan.cancelled) toast(scan.error, 'error'); return; }
-  try {
-    const result = await window.Api.aadhaarQr(scan.text);
-    regState.worker = result.worker;
-    // R05: names must match. The server won't block the scan (the typed name may just be
-    // a draft), but submit will — so say so now, with the Aadhaar name to copy.
-    regState.aadhaarNameWarning = result.nameMatches === false ? result.name : null;
-    toast(`Aadhaar scanned (…${result.last4})`, result.nameMatches === false ? 'error' : 'success');
+  if (!scan.ok) {
+    // The Aadhaar Secure QR is very dense and the live scanner often can't lock onto a
+    // printed card — offer the still-photo route rather than failing silently.
+    regState.qrHelp = true;
+    if (!scan.cancelled) toast(scan.error, 'error');
     renderRegStep(3);
+    speak('QR नहीं पढ़ा गया। QR की फोटो लें।', "Couldn't read the QR. Take a photo of the QR instead.");
+    return;
+  }
+  try { aadhaarQrAccepted(await window.Api.aadhaarQr(scan.text)); } catch (e) { toast(e.message, 'error'); }
+}
+// Fallback: a full-resolution photo of the QR, read by ML Kit on the phone or, failing
+// that, by the server.
+async function regPhotoAadhaarQr() {
+  const r = await window.TSGNative.scanQrFromPhoto();
+  if (r.cancelled) return;
+  toast('Reading the QR…', 'info');
+  try {
+    if (r.ok) return aadhaarQrAccepted(await window.Api.aadhaarQr(r.text));
+    if (r.dataUrl) return aadhaarQrAccepted(await window.Api.aadhaarQrImage(r.dataUrl));
+    toast(r.error || 'Could not take the photo', 'error');
   } catch (e) { toast(e.message, 'error'); }
+}
+function aadhaarQrAccepted(result) {
+  regState.qrHelp = false;
+  regState.worker = result.worker;
+  // R05: names must match. The server won't block the scan (the typed name may just be
+  // a draft), but submit will — so say so now, with the Aadhaar name to copy.
+  regState.aadhaarNameWarning = result.nameMatches === false ? result.name : null;
+  toast(`Aadhaar scanned (…${result.last4})`, result.nameMatches === false ? 'error' : 'success');
+  renderRegStep(3);
 }
 function useAadhaarName(btn) {
   document.getElementById('f_name').value = regState.aadhaarNameWarning;

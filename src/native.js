@@ -128,6 +128,34 @@ async function scanQrCode() {
   }
 }
 
+// Fallback for the dense Aadhaar Secure QR: the live scanner often can't lock onto a
+// printed card, but ML Kit usually reads a full-resolution still photo of it. Returns
+// { ok, text } when ML Kit read it, or { ok: false, dataUrl } so the server can try.
+async function scanQrFromPhoto() {
+  let photo;
+  try {
+    photo = await Camera.getPhoto({
+      quality: 95, allowEditing: false, resultType: CameraResultType.Uri,
+      source: CameraSource.Camera, direction: 'REAR', saveToGallery: false,
+    });
+  } catch (err) {
+    const msg = (err && err.message) || '';
+    return { ok: false, cancelled: /cancel/i.test(msg), error: msg || 'Camera unavailable' };
+  }
+  try {
+    const { barcodes } = await BarcodeScanner.readBarcodesFromImage({ path: photo.path, formats: [BarcodeFormat.QrCode] });
+    if (barcodes && barcodes.length && barcodes[0].rawValue) return { ok: true, text: barcodes[0].rawValue };
+  } catch (err) { /* fall through to server decode */ }
+  // Hand the photo to the server (downscaled so the upload stays reasonable).
+  try {
+    const blob = await (await fetch(photo.webPath)).blob();
+    const dataUrl = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob); });
+    return { ok: false, dataUrl: await downscaleDataUrl(dataUrl, 2400, 0.92) };
+  } catch (err) {
+    return { ok: false, error: 'Could not read the photo' };
+  }
+}
+
 // Rear camera, live capture only (no gallery), sized for OCR rather than a selfie.
 async function takeDocumentPhoto() {
   try {
@@ -210,4 +238,4 @@ async function minimizeApp() {
   try { await App.minimizeApp(); } catch (err) { /* web/dev fallback: no-op */ }
 }
 
-window.TSGNative = { mockLocationCheck, deviceClock, takeSelfie, scanQrCode, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };
+window.TSGNative = { mockLocationCheck, deviceClock, takeSelfie, scanQrCode, scanQrFromPhoto, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };
