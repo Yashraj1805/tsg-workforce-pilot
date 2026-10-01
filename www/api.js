@@ -180,6 +180,9 @@ const Api = {
   kioskCandidates: (last4) => apiFetch('/api/kiosk/candidates?last4=' + last4),
   kioskPunch: (data) => apiFetch('/api/kiosk/punch', { method: 'POST', body: data }),
 
+  // ---- AI assistant ----
+  askAssistant: (question) => apiFetch('/api/assistant/ask', { method: 'POST', body: { question } }),
+
   // ---- Admin users (System Admin) ----
   listAdminRoles: () => apiFetch('/api/admin-users/roles'),
   listAdminUsers: () => apiFetch('/api/admin-users'),

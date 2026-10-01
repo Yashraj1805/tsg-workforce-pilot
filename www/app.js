@@ -334,6 +334,7 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/kiosks', icon: 'camera', label: () => 'Gate tablets', perms: ['kiosks.manage'] },
   { hash: '#/hr/requests', icon: 'doc', label: () => 'Transfer & exit requests', perms: ['requests.view'] },
   { hash: '#/hr/timeguard', icon: 'shield', label: () => t('timeGuard'), perms: ['workers.read', 'punches.read'] },
+  { hash: '#/hr/ask', icon: 'sparkle', label: () => 'Ask AI', perms: ['reports.read'] },
   { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
 ];
@@ -2593,6 +2594,57 @@ async function billDownload(month) {
 
 // ---------------- R15: automatic emails (Central HR sets them once) ----------------
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// ---- AI assistant — ask attendance questions in plain language (see
+// src/services/aiAssistant.js: answers are always grounded in real, scoped data, the
+// model never writes SQL or invents a number). ----
+let hrAskHistory = [];
+let hrAskBusy = false;
+const HR_ASK_EXAMPLES = ['Aaj kitne workers present hain?', 'How many blocked punches this week?', 'Vinay ki attendance kaisi hai?', 'Which location has the most absences this month?'];
+
+function renderHrAsk() {
+  const s = requireHr(); if (!s) return;
+  renderShell(`
+    <div class="card">
+      <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>Ask AI</h3>
+      <p class="muted small">Attendance ke baare mein kuch bhi poocho — Hindi, English, dono. Answer hamesha real data se aata hai.</p>
+      ${hrAskHistory.length === 0 ? `<div class="filter-row" style="display:flex;flex-wrap:wrap;gap:8px">${HR_ASK_EXAMPLES.map(q => `<button class="btn secondary small" onclick="hrAskQuick('${esc(q).replace(/'/g, "\\'")}')">${esc(q)}</button>`).join('')}</div>` : ''}
+    </div>
+    ${hrAskHistory.map((h, i) => `
+      <div class="card">
+        <p style="font-weight:700">${esc(h.question)}</p>
+        ${h.error ? `<p class="muted small" style="color:var(--bad)">${esc(h.error)}</p>` : h.answer ? `<p>${esc(h.answer)}</p>` : `<div class="spinner-row"><div class="spinner"></div><span>Soch raha hoon…</span></div>`}
+      </div>`).reverse().join('')}
+    <div class="card" style="position:sticky;bottom:calc(76px + env(safe-area-inset-bottom, 0px))">
+      <div class="filter-row" style="display:flex;gap:8px">
+        <input id="hrAskInput" class="input" style="margin:0;flex:1" placeholder="Apna sawal yahan likho…" ${hrAskBusy ? 'disabled' : ''} onkeydown="if(event.key==='Enter')hrAskSubmit()" />
+        <button class="btn primary" ${hrAskBusy ? 'disabled' : ''} onclick="hrAskSubmit()">Ask</button>
+      </div>
+    </div>`);
+  const inp = document.getElementById('hrAskInput');
+  if (inp) inp.focus();
+}
+function hrAskQuick(q) {
+  document.getElementById('hrAskInput').value = q;
+  hrAskSubmit();
+}
+async function hrAskSubmit() {
+  const inp = document.getElementById('hrAskInput');
+  const question = (inp.value || '').trim();
+  if (!question || hrAskBusy) return;
+  hrAskBusy = true;
+  const entry = { question };
+  hrAskHistory.push(entry);
+  renderHrAsk();
+  try {
+    const r = await window.Api.askAssistant(question);
+    entry.answer = r.answer;
+  } catch (e) {
+    entry.error = e.message;
+  }
+  hrAskBusy = false;
+  renderHrAsk();
+}
+
 function renderHrEmails() {
   const s = requireHr(); if (!s) return;
   withLoading(() => window.Api.emailReports(), (data) => {
@@ -2830,6 +2882,7 @@ function render() {
     '#/hr/audit': renderHrAudit,
     '#/hr/more': renderHrMore,
     '#/hr/timeguard': renderHrTimeGuard,
+    '#/hr/ask': renderHrAsk,
     '#/hr/account': renderHrAccount,
     '#/hr/worker': renderHrWorkerDetail,
     '#/hr/users': renderHrUsers,
