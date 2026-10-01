@@ -501,7 +501,11 @@ let regState = { step: 1 };
 const REG_STEPS = 8;
 
 // Hindi first, English below.
-function bi(hi, en) { return `<span class="bi-hi">${hi}</span><span class="bi-en">${en}</span>`; }
+function bi(hi, en) {
+  if (currentLang === 'en') return `<span class="bi-en">${en}</span>`;
+  if (currentLang === 'hi') return `<span class="bi-hi">${hi}</span>`;
+  return `<span class="bi-hi">${hi}</span><span class="bi-en">${en}</span>`;
+}
 function regHeader(n, hi, en) {
   speak(hi, en);
   return `<div class="muted small">${n} / ${REG_STEPS}</div><div class="step-bar"><div style="width:${Math.round(n / REG_STEPS * 100)}%"></div></div><h3>${bi(hi, en)}</h3>`;
@@ -517,8 +521,8 @@ function tiles(items, selected, pick) {
   return `<div class="tile-grid">${items.map(i => `
     <button class="tile ${i.id === selected ? 'selected' : ''}" onclick="${pick}('${i.id}')">
       <span class="tile-icon">${i.icon || '•'}</span>
-      <span class="tile-hi">${esc(i.hi || i.name_hi || '')}</span>
-      <span class="tile-en">${esc(i.en || i.name || '')}</span>
+      ${currentLang !== 'en' ? `<span class="tile-hi">${esc(i.hi || i.name_hi || '')}</span>` : ''}
+      ${currentLang !== 'hi' ? `<span class="tile-en">${esc(i.en || i.name || '')}</span>` : ''}
       ${i.id === selected ? '<span class="tile-tick">✓</span>' : ''}
     </button>`).join('')}</div>`;
 }
@@ -560,8 +564,8 @@ function regConsent() {
   renderShell(`
     <div class="card">
       ${regHeader(1, 'सहमति', 'Consent')}
-      <p class="consent-text bi-hi">${esc(c.hi)}</p>
-      <p class="consent-text bi-en">${esc(c.en)}</p>
+      ${currentLang !== 'en' ? `<p class="consent-text bi-hi">${esc(c.hi)}</p>` : ''}
+      ${currentLang !== 'hi' ? `<p class="consent-text bi-en">${esc(c.en)}</p>` : ''}
       <button class="btn secondary small" onclick="speak(regState.opts.consent.hi, regState.opts.consent.en, true)">🔊 ${bi('फिर से सुनें', 'Listen again')}</button>
       <label class="consent-row" style="margin-top:14px"><input type="checkbox" id="f_consent" ${accepted ? 'checked' : ''} /><span>${bi('मैं सहमत हूँ', 'I agree')}</span></label>
       ${regNav(null, null, 'regConsentNext()')}
