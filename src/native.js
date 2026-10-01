@@ -7,14 +7,16 @@ import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning
 // Exposes a small, promise-based bridge the plain app.js script can call.
 // Falls back gracefully if running in a plain desktop browser during development.
 
-async function takeSelfie() {
+// direction: 'FRONT' for a worker's own selfie, 'REAR' when Site HR photographs the
+// worker on HR's phone (assisted registration).
+async function takeSelfie(direction) {
   try {
     const photo = await Camera.getPhoto({
       quality: 70,
       allowEditing: false,
       resultType: CameraResultType.DataUrl,
       source: CameraSource.Camera, // forces live camera, never the gallery (FR-K05)
-      direction: 'FRONT',
+      direction: direction === 'REAR' ? 'REAR' : 'FRONT',
       saveToGallery: false,
     });
     return { ok: true, dataUrl: photo.dataUrl };

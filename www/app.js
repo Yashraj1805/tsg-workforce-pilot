@@ -102,6 +102,7 @@ async function doLogout() {
 // The server ended the session (logout elsewhere, idle timeout, deactivated account):
 // back to the start screen with the server's reason, rather than a "Retry" button.
 function sessionEnded(message) {
+  if (isAssisted()) { toast(message || 'Registration session ended', 'error'); return endAssistedSession(); }
   clearSessionData();
   toast(message || 'Please sign in again', 'error');
   location.hash = '#/'; render();
@@ -245,8 +246,11 @@ function barChart(entries) {
 function renderShell(innerHtml) {
   const s = getSession();
   const app = document.getElementById('app');
-  const nav = s ? renderNav(s.role) : '';
-  app.innerHTML = `
+  const nav = s && !s.assisted ? renderNav(s.role) : '';
+  const assistBanner = s && s.assisted ? `<div class="gps-status warn" style="margin:0;border-radius:0">
+      Registering worker <b>${esc(s.mobile)}</b> on ${esc(s.assistedBy || 'Site HR')}'s phone
+      <button class="btn secondary small" style="margin-left:8px" onclick="endAssistedSession()">Exit</button></div>` : '';
+  app.innerHTML = assistBanner + `
     <header class="topbar">
       <div class="topbar-title">
         <div class="app-name">${t('appName')}</div>
@@ -280,6 +284,7 @@ function hasPerm(p) { const s = getSession(); return !!(s && s.permissions && s.
 const ADMIN_SCREENS = [
   { hash: '#/hr/dashboard', icon: 'chart', label: () => t('hrDashboard'), perms: ['workers.read', 'punches.read'], nav: true },
   { hash: '#/hr/approvals', icon: 'check', label: () => t('hrApprovals'), perms: ['workers.approve'], nav: true },
+  { hash: '#/hr/assist', icon: 'user', label: () => 'Register worker', perms: ['workers.register_assisted'], nav: true },
   { hash: '#/hr/attendance', icon: 'calendar', label: () => t('hrAttendance'), perms: ['workers.read', 'punches.read'], nav: true },
   { hash: '#/hr/exceptions', icon: 'warn', label: () => t('hrExceptions'), perms: ['punches.read'], nav: true },
   { hash: '#/hr/masters', icon: 'building', label: () => t('hrMasters'), perms: ['masters.write'], nav: true },
@@ -513,8 +518,10 @@ async function regStep1Next() {
 async function renderRegStep2() {
   await withLoading(
     () => Promise.all([window.Api.listVendors(), window.Api.listLocations()]),
-    ([allVendors, locations]) => {
+    ([allVendors, allLocations]) => {
       const w = regState.worker;
+      // Assisted registration: the worker is registered at the Site HR's own site.
+      const locations = isAssisted() ? allLocations.filter(l => l.id === w.location_id) : allLocations;
       // R01: only vendors with a current contract (the server refuses others anyway).
       const today = todayStr(Date.now());
       const vendors = allVendors.filter(v => v.id === w.vendor_id || (v.status !== 'inactive' && !(v.contract_end && v.contract_end < today) && !(v.contract_start && v.contract_start > today)));
@@ -544,7 +551,7 @@ async function renderRegStep2() {
   );
 }
 async function regCapturePhoto() {
-  const res = await window.TSGNative.takeSelfie();
+  const res = await window.TSGNative.takeSelfie(isAssisted() ? 'REAR' : 'FRONT');
   if (!res.ok) { toast('Camera failed: ' + res.error, 'error'); return; }
   try {
     regState.worker = await window.Api.updateMe({ photoDataUrl: res.dataUrl });
@@ -678,6 +685,7 @@ async function regSubmit() {
   try {
     await window.Api.submitMe();
     toast('Submitted for HR approval', 'success');
+    if (isAssisted()) return endAssistedSession();
     location.hash = '#/w/pending'; render();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -1138,6 +1146,7 @@ function renderHrApprovals() {
               <span class="muted small">${esc(w.mobile)} · ${esc(w.designation||'')}</span><br/>
               <span class="muted small">Aadhaar: ${w.aadhaar_verified ? '✅' : '⏳'} · PAN: ${w.pan_verified ? '✅' : '⏳'}</span>
               ${faceCheckLine(w)}
+              ${w.registered_by ? `<br/><span class="muted small">Registered in person by ${esc(w.registered_by)}</span>` : ""}
             </div>
             <div class="approval-actions">
               <button class="btn primary small" onclick="hrApprove('${w.id}')">${t('approve')}</button>
@@ -1745,6 +1754,58 @@ async function addLocation() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// ---------------- Site HR: register a worker on HR's phone (BRD design rule 8) ----------------
+// The worker's own OTP (sent to their mobile) unlocks a short-lived "assisted" worker
+// session; this phone then runs the normal registration wizard for them. HR's own
+// session is set aside and restored when the registration is submitted or HR exits.
+const ASSIST_BACKUP_KEY = 'tsg_assist_hr_session';
+function isAssisted() { const s = getSession(); return !!(s && s.assisted); }
+
+function renderHrAssist() {
+  const s = requireHr(); if (!s) return;
+  renderShell(`
+    <div class="card center-card">
+      <h3>Register a worker</h3>
+      <p class="muted small">The worker must be with you. An OTP goes to <b>the worker's</b> mobile — they read it out to you. Then fill the registration with them, including a live photo of their face.</p>
+      <label>${t('mobileNumber')} (worker's)</label>
+      <input id="as_mobile" class="input" maxlength="10" inputmode="numeric" placeholder="98xxxxxxxx" />
+      <button class="btn primary block" onclick="assistRequestOtp()">${t('sendOtp')}</button>
+      <div id="as_otp"></div>
+    </div>`);
+}
+async function assistRequestOtp() {
+  const mobile = fieldVal('as_mobile').trim();
+  if (!/^\d{10}$/.test(mobile)) { toast(t('invalidMobile'), 'error'); return; }
+  try {
+    const r = await window.Api.assistOtpRequest(mobile);
+    window._assistMobile = mobile;
+    document.getElementById('as_otp').innerHTML = `
+      <p class="muted small">${r.devOtp ? `${t('otpHint')}: ${r.devOtp}` : `OTP sent to the worker's mobile ${esc(mobile)}`}</p>
+      <label>OTP from the worker's phone</label>
+      <input id="as_code" class="input" maxlength="6" inputmode="numeric" />
+      <button class="btn primary block" onclick="assistVerifyOtp()">${t('verify')}</button>`;
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function assistVerifyOtp() {
+  try {
+    const r = await window.Api.assistOtpVerify(window._assistMobile, fieldVal('as_code').trim());
+    const hr = getSession();
+    localStorage.setItem(ASSIST_BACKUP_KEY, JSON.stringify(hr));
+    setSessionData({ token: r.token, role: 'worker', mobile: r.worker.mobile, workerId: r.worker.id, assisted: true, assistedBy: hr.name });
+    regState = { step: 1 };
+    location.hash = '#/w/register'; render();
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function endAssistedSession() {
+  try { await window.Api.logout(); } catch (e) { /* ended or offline — the server idles it out */ }
+  let hr = null;
+  try { hr = JSON.parse(localStorage.getItem(ASSIST_BACKUP_KEY) || 'null'); } catch (e) { /* corrupt */ }
+  localStorage.removeItem(ASSIST_BACKUP_KEY);
+  regState = { step: 1 };
+  if (hr) { setSessionData(hr); location.hash = '#/hr/assist'; } else { clearSessionData(); location.hash = '#/'; }
+  render();
+}
+
 // ---------------- R16: vendor bill check + month-end lock ----------------
 // System days (computed by the server from punches + approved corrections) against what
 // each vendor invoiced; any gap is highlighted. Finance enters invoice days once Central
@@ -1970,6 +2031,8 @@ function render() {
   let hash = location.hash || '#/';
   if (hash !== '#/settings' && !getApiBase()) { location.hash = hash = '#/settings'; }
   const s = getSession();
+  // Assisted registration only ever shows the registration wizard (never punching).
+  if (s && s.assisted && hash !== '#/w/register') { location.hash = hash = '#/w/register'; }
   if (hash === '#/' || hash === '') {
     if (s && s.role === 'worker') { location.hash = hash = '#/w/home'; }
     else if (isAdminSession(s)) { location.hash = hash = adminHomeHash(); }
@@ -1997,6 +2060,7 @@ function render() {
     '#/hr/users': renderHrUsers,
     '#/hr/workers': renderHrWorkers,
     '#/hr/billing': renderHrBilling,
+    '#/hr/assist': renderHrAssist,
     '#/hr/logout-confirm': renderHrLogoutConfirm,
   };
   const fn = routes[hash];

@@ -75,6 +75,9 @@ const Api = {
   hrOtpVerify: (email, otp, name, devRole) => apiFetch('/api/auth/hr/otp/verify', { method: 'POST', body: { email, otp, name, devRole } }),
   getAdminMe: () => apiFetch('/api/auth/me'),
   logout: () => apiFetch('/api/auth/logout', { method: 'POST' }),
+  // Site HR assisted registration: OTP goes to the worker's mobile.
+  assistOtpRequest: (mobile) => apiFetch('/api/assisted/otp/request', { method: 'POST', body: { mobile } }),
+  assistOtpVerify: (mobile, otp) => apiFetch('/api/assisted/otp/verify', { method: 'POST', body: { mobile, otp } }),
 
   // ---- Worker profile ----
   getMe: () => apiFetch('/api/workers/me'),
