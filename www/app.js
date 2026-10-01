@@ -779,7 +779,7 @@ async function doPunch() {
   if (!pos.ok) { toast(t('punchBlocked') + ': ' + pos.error, 'error'); renderWorkerHome(); return; }
 
   try {
-    const result = await window.Api.punch({ type, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, selfieDataUrl: selfie.dataUrl });
+    const result = await window.Api.punch({ type, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, isMockLocation: pos.isMockLocation, selfieDataUrl: selfie.dataUrl });
     renderWorkerHome();
     showResultScreen(true, t('punchAccepted'), type === 'in' ? t('punchIn') : t('punchOut'));
   } catch (e) {

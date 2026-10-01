@@ -3,6 +3,11 @@ import { Geolocation } from '@capacitor/geolocation';
 import { CameraPreview } from '@capacitor-community/camera-preview';
 import { App } from '@capacitor/app';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
+import { registerPlugin } from '@capacitor/core';
+
+// Small custom native plugin (android/app/.../MockLocationPlugin.java) — see its header
+// comment for why @capacitor/geolocation can't answer this on its own (R10).
+const MockLocation = registerPlugin('MockLocation');
 
 // Exposes a small, promise-based bridge the plain app.js script can call.
 // Falls back gracefully if running in a plain desktop browser during development.
@@ -104,11 +109,15 @@ async function getPosition() {
   try {
     const perm = await Geolocation.requestPermissions().catch(() => null);
     const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 });
+    // Best-effort — if this native check itself fails for any reason, don't fail the
+    // whole punch over it; the server treats a missing flag the same as "not mock".
+    const mock = await MockLocation.checkMockLocation().catch(() => ({ isMock: false }));
     return {
       ok: true,
       lat: pos.coords.latitude,
       lng: pos.coords.longitude,
       accuracy: pos.coords.accuracy,
+      isMockLocation: !!mock.isMock,
     };
   } catch (err) {
     return { ok: false, error: (err && err.message) || 'Location unavailable or permission denied' };
