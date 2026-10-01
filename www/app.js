@@ -1192,45 +1192,96 @@ function renderWorkerAttendance() {
   if (!requireWorker()) return;
   loadWorkerAttendance();
 }
+
+// ---- My days (BRD §11 screen 9, R12): monthly calendar — green present, red absent,
+// yellow missed punch, grey off day. Tap a day for its in/out times. Worker cannot edit
+// (screen 10): the missed-punch button calls Site HR.
 async function loadWorkerAttendance() {
   renderShell(`<div class="card">${spinnerRow('Loading…')}</div>`);
   try {
-    const [punches, myRegs] = await Promise.all([window.Api.myPunches(), window.Api.myRegularisations()]);
-    const days = [];
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    for (let d = new Date(start); d <= now; d.setDate(d.getDate() + 1)) {
-      const dayStr = todayStr(d.getTime() + 12 * 3600000); // noon of that local day -> its IST date
-      const st = attendanceStatusForDay(punches, dayStr);
-      const reg = myRegs.find(r => r.date === dayStr);
-      days.push({ dayStr, ...st, regularised: reg && reg.status === 'approved', regPending: reg && reg.status === 'pending' });
-    }
-    days.reverse();
-    renderShell(`
-      <div class="card">
-        <h3>${t('attendance')}</h3>
-        <p class="muted small">${t('missedPunchHint')}</p>
-        <table class="tbl">
-          <thead><tr><th>${t('date')}</th><th>In</th><th>Out</th><th>Hrs</th><th>${t('status')}</th><th></th></tr></thead>
-          <tbody>
-            ${days.map(d => `<tr>
-              <td>${d.dayStr}</td><td>${fmtTime(d.inTime)}</td><td>${fmtTime(d.outTime)}</td><td>${d.hours||'-'}</td>
-              <td>${d.regularised && d.status!=='present' ? statusBadge('present') + ' <span class="badge badge-neutral">Regularised</span>' : statusBadge(d.status)}</td>
-              <td>${(d.status==='absent' || d.status==='missed_punch_out') && !d.regularised ?
-                (d.regPending ? `<span class="muted small">Pending</span>` : `<button class="btn warn small" onclick="callSiteHr()">${t('callSiteHr')}</button>`)
-                : ''}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-    `);
+    const [me, punches, myRegs] = await Promise.all([window.Api.getMe(), window.Api.myPunches(), window.Api.myRegularisations()]);
+    window._myWorker = me;
+    window._calData = { me, punches, myRegs };
+    if (!window._calMonth) window._calMonth = todayStr(Date.now()).slice(0, 7);
+    renderWorkerCalendar();
   } catch (e) {
+    if (e.status === 401) return sessionEnded(e.message);
     renderShell(`<div class="card">${errorState(e.message)}</div>`);
   }
 }
+function dayInfo(dayStr) {
+  const { me, punches, myRegs } = window._calData;
+  const today = todayStr(Date.now());
+  const st = attendanceStatusForDay(punches, dayStr);
+  const reg = myRegs.find(r => r.date === dayStr);
+  const weeklyOff = me.location && me.location.weekly_off != null ? me.location.weekly_off : null;
+  const dow = new Date(dayStr + 'T12:00:00Z').getUTCDay();
+  const startDay = todayStr(me.created_at || 0);
+  let kind;
+  if (dayStr > today) kind = 'future';
+  else if (st.status === 'present' || st.status === 'half_day') kind = 'present';
+  else if (reg && reg.status === 'approved') kind = 'present';
+  else if (st.status === 'missed_punch_out') kind = dayStr === today ? 'present' : 'missed';
+  else if (weeklyOff === dow) kind = 'off';
+  else if (dayStr < startDay || dayStr === today) kind = 'future'; // before joining / today not over yet
+  else kind = 'absent';
+  return { kind, st, reg };
+}
+function renderWorkerCalendar() {
+  const month = window._calMonth;
+  const [y, m] = month.split('-').map(Number);
+  const first = new Date(Date.UTC(y, m - 1, 1));
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const lead = first.getUTCDay(); // 0 = Sunday
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<div class="cal-cell empty"></div>');
+  const counts = { present: 0, absent: 0, missed: 0, off: 0 };
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dayStr = `${month}-${String(d).padStart(2, '0')}`;
+    const { kind } = dayInfo(dayStr);
+    if (counts[kind] != null) counts[kind]++;
+    cells.push(`<button class="cal-cell ${kind}" onclick="showCalDay('${dayStr}')">${d}</button>`);
+  }
+  const shift = (delta) => { const dt = new Date(Date.UTC(y, m - 1 + delta, 1)); return dt.toISOString().slice(0, 7); };
+  const monthName = first.toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  speak(`${counts.present} दिन हाज़िर, ${counts.absent} दिन ग़ैरहाज़िर`, `${counts.present} days present, ${counts.absent} days absent`);
+  renderShell(`
+    <div class="card">
+      <h3>${bi('मेरे दिन', 'My days')}</h3>
+      <div class="cal-head">
+        <button class="btn secondary small" onclick="window._calMonth='${shift(-1)}';renderWorkerCalendar()">‹</button>
+        <b>${monthName}</b>
+        <button class="btn secondary small" ${month >= todayStr(Date.now()).slice(0, 7) ? 'disabled' : ''} onclick="window._calMonth='${shift(1)}';renderWorkerCalendar()">›</button>
+      </div>
+      <div class="cal-grid">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(x => `<div class="cal-dow">${x}</div>`).join('')}${cells.join('')}</div>
+      <div class="cal-legend">
+        <span><i class="present"></i>${bi('हाज़िर', 'Present')} ${counts.present}</span>
+        <span><i class="absent"></i>${bi('ग़ैरहाज़िर', 'Absent')} ${counts.absent}</span>
+        <span><i class="missed"></i>${bi('पंच छूटा', 'Missed punch')} ${counts.missed}</span>
+        <span><i class="off"></i>${bi('छुट्टी', 'Off day')} ${counts.off}</span>
+      </div>
+      <div id="calDay"></div>
+      <p class="muted small" style="margin-top:10px">${t('missedPunchHint')}</p>
+      <button class="btn warn block" onclick="callSiteHr()">📞 ${t('callSiteHr')}</button>
+    </div>
+  `);
+}
+function showCalDay(dayStr) {
+  const { kind, st, reg } = dayInfo(dayStr);
+  const label = { present: ['हाज़िर', 'Present'], absent: ['ग़ैरहाज़िर', 'Absent'], missed: ['पंच आउट छूटा', 'Missed punch-out'], off: ['छुट्टी', 'Off day'], future: ['—', '—'] }[kind];
+  document.getElementById('calDay').innerHTML = `
+    <div class="worker-summary">
+      <b>${dayStr}</b> · ${bi(label[0], label[1])}
+      <div class="small">In ${fmtTime(st.inTime)} · Out ${fmtTime(st.outTime)}${st.hours ? ` · ${st.hours} h` : ''}</div>
+      ${reg ? `<div class="small muted">Missed-punch request: ${esc(reg.status)}</div>` : ''}
+    </div>`;
+}
 function callSiteHr() {
   const w = window._myWorker;
-  const phone = (w && w.vendor && w.vendor.phone) || '18001234567';
+  // BRD §11 screen 10: the button calls the Site HR at the worker's site; the vendor's
+  // number is only a fallback when no Site HR phone is set up yet.
+  const phone = (w && w.siteHr && w.siteHr.phone) || (w && w.vendor && w.vendor.phone);
+  if (!phone) { toast('No Site HR phone number set up yet — ask your supervisor', 'error'); return; }
   toast(t('missedPunchBody'), 'info');
   location.href = 'tel:' + phone;
 }
@@ -1945,6 +1996,8 @@ function renderLocationEditForm() {
       <label>${t('longitude')}</label><input id="el_lng" type="number" step="any" class="input" value="${l.lng}" />
       <label>${t('radius')}</label><input id="el_radius" type="number" class="input" value="${l.radius}" />
       <label>${t('accuracyTolerance')}</label><input id="el_acc" type="number" class="input" value="${l.accuracy_limit||100}" />
+      <label>Weekly off (shown grey on workers' calendars)</label>
+      <select id="el_off" class="input"><option value="">None</option>${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d, i) => `<option value="${i}" ${l.weekly_off === i ? 'selected' : ''}>${d}</option>`).join('')}</select>
       <p class="map-hint">${t('accuracyToleranceHint')}</p>
       <div class="wizard-actions">
         <button class="btn secondary" onclick="editingLocation=null;renderHrMasters()">${t('cancel')}</button>
@@ -1969,6 +2022,7 @@ async function saveEditLocation() {
       name: document.getElementById('el_name').value.trim(), brand: document.getElementById('el_brand').value.trim(),
       lat, lng, radius: parseInt(document.getElementById('el_radius').value, 10) || undefined,
       accuracyLimit: parseInt(document.getElementById('el_acc').value, 10) || undefined,
+      weeklyOff: document.getElementById('el_off').value === '' ? null : Number(document.getElementById('el_off').value),
     });
     toast('Location updated', 'success');
     editingLocation = null;
@@ -2282,6 +2336,7 @@ function renderUserForm(roles, locations, vendors) {
       <h3>${isNew ? 'Add user' : 'Edit: ' + esc(u.email)}</h3>
       <label>${t('name')}</label><input id="au_name" class="input" value="${esc(u.name || '')}" />
       ${isNew ? `<label>Email</label><input id="au_email" class="input" placeholder="name@thesachdevgroup.com" />` : ''}
+      <label>Mobile (Site HR: workers' missed-punch button calls this)</label><input id="au_phone" class="input" maxlength="10" inputmode="numeric" value="${esc(u.phone || '')}" />
       <label>Role</label>
       <select id="au_role" class="input" onchange="syncUserScopeFields()">${roles.map(r => `<option value="${r.id}" ${u.role === r.id ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select>
       <div id="au_loc_wrap"><label>${t('location')}</label>
@@ -2316,7 +2371,7 @@ function syncUserScopeFields() {
 }
 async function saveUser() {
   const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
-  const body = { name: val('au_name'), role: val('au_role'), locationId: val('au_location') || null, vendorId: val('au_vendor') || null };
+  const body = { name: val('au_name'), role: val('au_role'), locationId: val('au_location') || null, vendorId: val('au_vendor') || null, phone: val('au_phone') || null };
   try {
     if (editingUser.id) await window.Api.updateAdminUser(editingUser.id, { ...body, status: val('au_status') });
     else await window.Api.createAdminUser({ ...body, email: val('au_email') });
