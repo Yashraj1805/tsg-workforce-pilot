@@ -1,0 +1,65 @@
+/* Self-hosted fonts — no external Google Fonts request at launch. That request was
+   render-blocking (a <link rel="stylesheet"> holds up first paint) and could hang or
+   get silently dropped on a restrictive/proxied corporate Wi-Fi, causing a blank
+   screen on launch until it timed out. Bundling the files locally removes that
+   external dependency entirely, same reasoning as bundling Leaflet locally. */
+
+@font-face {
+  font-family: 'Amiko';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('amiko-400-devanagari.woff2') format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
+}
+@font-face {
+  font-family: 'Amiko';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('amiko-400-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Amiko';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('amiko-600-devanagari.woff2') format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
+}
+@font-face {
+  font-family: 'Amiko';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('amiko-600-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Amiko';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('amiko-700-devanagari.woff2') format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
+}
+@font-face {
+  font-family: 'Amiko';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('amiko-700-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('atkinson-400-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('atkinson-700-latin.woff2') format('woff2');
+}

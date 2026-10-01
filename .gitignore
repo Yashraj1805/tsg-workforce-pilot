@@ -1,0 +1,20 @@
+node_modules/
+www/native-bundle.js
+
+# Android / Gradle build output
+android/.gradle/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/app/*.iml
+android/captures/
+android/.externalNativeBuild/
+android/.cxx/
+
+# Built APKs (rebuild locally with `npm run apk`)
+*.apk
+
+# Debug/test screenshots, not app source
+tsg_scan*.png

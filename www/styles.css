@@ -1,0 +1,283 @@
+/* Design system: Accessible & Ethical (civic/government-trust palette), tuned for
+   low-literacy field workers on low-end Android phones + an HR admin console.
+   Typography: Atkinson Hyperlegible (max-legibility Latin) with Amiko as the
+   Devanagari fallback for Hindi text, both loaded via index.html. */
+:root {
+  --primary: #1e40af;
+  --primary-dark: #1e3a8a;
+  --primary-tint: #eff6ff;
+  --accent: #16a34a;      /* punch-in / success — matches BRD "green = punch in" */
+  --accent-dark: #15803d;
+  --accent-tint: #dcfce7;
+  --warn: #b45309;        /* punch-out — matches BRD "orange = punch out" */
+  --warn-btn: #ea580c;
+  --warn-tint: #fef3c7;
+  --bad: #b91c1c;         /* problem — matches BRD "red = problem" */
+  --bad-btn: #dc2626;
+  --bad-tint: #fee2e2;
+  --bg: #eff6ff;
+  --card-bg: #ffffff;
+  --text: #1e3a8a;
+  --text-strong: #0f172a;
+  --muted: #475569;
+  --border: #bfdbfe;
+  --border-soft: #e2e8f0;
+  --focus-ring: #f59e0b;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); touch-action: manipulation; }
+body {
+  font-family: 'Atkinson Hyperlegible', 'Amiko', -apple-system, Roboto, "Segoe UI", Arial, sans-serif;
+  color: var(--text-strong);
+  font-size: 16px;
+  line-height: 1.5;
+  display: flex; flex-direction: column;
+}
+#app { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+
+:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+.topbar {
+  background: var(--primary);
+  color: #fff;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+  display: flex; justify-content: space-between; align-items: center;
+  position: sticky; top: 0; z-index: 10;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
+}
+.app-name { font-weight: 700; font-size: 18px; }
+.demo-badge { font-size: 11px; opacity: 0.9; background: rgba(255,255,255,0.18); padding: 3px 8px; border-radius: 20px; margin-top: 4px; display: inline-block; }
+.topbar-actions { display: flex; gap: 6px; align-items: center; }
+.lang-btn { background: transparent; border: 1.5px solid rgba(255,255,255,0.6); color: #fff; border-radius: 6px; padding: 6px 10px; font-size: 13px; font-weight: 600; min-height: 36px; min-width: 36px; }
+.lang-btn.active { background: #fff; color: var(--primary); border-color: #fff; }
+
+/* Segmented language toggle for use on light card backgrounds (Menu/Account screens). */
+.lang-toggle { display: inline-flex; background: var(--border-soft); border-radius: 10px; padding: 3px; margin-top: 4px; }
+.lang-toggle .lang-btn.on-light { color: var(--muted); border: none; background: transparent; padding: 7px 18px; border-radius: 8px; }
+.lang-toggle .lang-btn.on-light.active { background: var(--primary); color: #fff; }
+
+.content { flex: 1; padding: 14px; padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px)); max-width: 720px; width: 100%; margin: 0 auto; animation: screen-in 220ms ease-out; }
+@keyframes screen-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+.bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: #fff; border-top: 1px solid var(--border-soft);
+  display: flex; overflow-x: auto;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-shadow: 0 -2px 8px rgba(15, 23, 42, 0.06);
+  z-index: 10;
+}
+.bottom-nav a {
+  flex: 1; text-align: center; padding: 8px 6px; font-size: 11px; font-weight: 600;
+  min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  color: var(--muted); text-decoration: none; white-space: nowrap;
+}
+.bottom-nav a.active { color: var(--primary); }
+.bottom-nav a.active .nav-icon { color: var(--primary); }
+.bottom-nav a .nav-icon { width: 22px; height: 22px; display: inline-flex; }
+.bottom-nav a .nav-icon svg { width: 100%; height: 100%; }
+
+.card { background: var(--card-bg); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06); }
+.center-card { text-align: center; max-width: 420px; margin: 40px auto; }
+
+h2, h3 { margin-top: 0; color: var(--text-strong); }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+
+.input {
+  width: 100%; padding: 12px; margin: 6px 0 14px; border: 1.5px solid var(--border);
+  border-radius: 8px; font-size: 16px; background: #fbfdff; font-family: inherit; color: var(--text-strong);
+  min-height: 44px;
+}
+.input:focus { border-color: var(--primary); }
+label { font-size: 14px; font-weight: 700; color: var(--text-strong); }
+textarea.input { min-height: 70px; resize: vertical; }
+
+.btn {
+  border: none; border-radius: 10px; padding: 12px 18px; font-size: 15px; font-weight: 700;
+  min-height: 44px; cursor: pointer; margin: 4px 4px 4px 0;
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 150ms ease;
+}
+.btn:active { transform: scale(0.98); }
+.btn.primary { background: var(--primary); color: #fff; }
+.btn.primary:hover { background: var(--primary-dark); }
+.btn.success { background: var(--accent); color: #fff; }
+.btn.success:hover { background: var(--accent-dark); }
+.btn.secondary { background: var(--primary-tint); color: var(--primary-dark); border: 1.5px solid var(--border); }
+.btn.warn { background: var(--warn-btn); color: #fff; }
+.btn.danger { background: var(--bad-btn); color: #fff; }
+.btn.block { display: block; width: 100%; }
+.btn.big { padding: 22px; font-size: 19px; min-height: 68px; border-radius: 14px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15); }
+.btn.small { padding: 8px 12px; font-size: 12.5px; min-height: 36px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.icon-inline { display: inline-flex; width: 16px; height: 16px; vertical-align: -3px; margin-right: 2px; }
+.icon-inline svg { width: 100%; height: 100%; }
+
+.link-btn { background: none; border: none; color: var(--primary); text-decoration: underline; cursor: pointer; font-size: 14px; padding: 8px 2px; min-height: 32px; font-family: inherit; }
+.link-btn.small { font-size: 12px; opacity: 0.85; }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+.badge-ok { background: var(--accent-tint); color: var(--accent-dark); }
+.badge-warn { background: var(--warn-tint); color: var(--warn); }
+.badge-bad { background: var(--bad-tint); color: var(--bad); }
+.badge-neutral { background: var(--border-soft); color: var(--muted); }
+
+.wizard-actions { display: flex; justify-content: space-between; margin-top: 16px; gap: 10px; }
+
+.selfie-frame { width: 168px; height: 168px; margin: 12px auto; border-radius: 50%; overflow: hidden; background: var(--primary-tint); display: flex; align-items: center; justify-content: center; border: 3px dashed var(--border); }
+.selfie-preview { width: 100%; height: 100%; object-fit: cover; }
+.selfie-placeholder { color: var(--muted); font-size: 13px; text-align: center; padding: 0 16px; }
+
+.kyc-status { margin: 12px 0; font-weight: 700; font-size: 15px; }
+.kyc-status.ok { color: var(--accent-dark); }
+.consent-row { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; font-size: 14px; margin: 14px 0; }
+.consent-row input { margin-top: 3px; width: 20px; height: 20px; flex-shrink: 0; }
+
+.worker-summary { margin-top: 16px; text-align: left; background: var(--primary-tint); border: 1px solid var(--border); padding: 14px; border-radius: var(--radius); }
+
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.stat-card { background: #fff; border: 1px solid var(--border-soft); border-left: 4px solid var(--primary); border-radius: var(--radius); padding: 14px; text-align: center; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06); }
+.stat-card.warn { background: var(--warn-tint); border-left-color: var(--warn-btn); }
+.stat-card.action { cursor: pointer; border-left-color: var(--accent); }
+.stat-num { font-size: 28px; font-weight: 800; color: var(--text-strong); line-height: 1.1; }
+.stat-label { font-size: 12.5px; color: var(--muted); margin-top: 4px; font-weight: 600; }
+
+.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
+.tbl th, .tbl td { text-align: left; padding: 9px 6px; border-bottom: 1px solid var(--border-soft); }
+.tbl th { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+.tbl tr:last-child td { border-bottom: none; }
+
+.approval-row { display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
+.approval-info { flex: 1; font-size: 13.5px; }
+.approval-actions { display: flex; flex-direction: column; gap: 6px; }
+.thumb { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; background: var(--border-soft); }
+.thumb.placeholder { display: flex; align-items: center; justify-content: center; }
+
+details summary { cursor: pointer; margin-top: 10px; padding: 8px 0; min-height: 32px; font-weight: 600; }
+
+.map-box { width: 100%; height: 220px; border-radius: var(--radius); overflow: hidden; margin: 10px 0; border: 1.5px solid var(--border); background: var(--primary-tint); }
+.map-hint { font-size: 12.5px; color: var(--muted); margin: -6px 0 10px; }
+
+.gps-status { border-radius: var(--radius); padding: 14px; margin: 10px 0; font-size: 13.5px; border: 1px solid transparent; }
+.gps-status.ok { background: var(--accent-tint); color: var(--accent-dark); border-color: #86efac; }
+.gps-status.warn { background: var(--warn-tint); color: var(--warn); border-color: #fcd34d; }
+.gps-status.bad { background: var(--bad-tint); color: var(--bad); border-color: #fca5a5; }
+.gps-status.loading { background: var(--border-soft); color: var(--muted); }
+.gps-status .gps-row { display: flex; justify-content: space-between; margin-top: 4px; }
+
+/* Loading spinner — used for GPS/KYC/async waits; text label always accompanies it. */
+.spinner-row { display: flex; align-items: center; gap: 10px; color: var(--muted); padding: 4px 0; }
+.spinner { width: 20px; height: 20px; border: 3px solid var(--border-soft); border-top-color: var(--primary); border-radius: 50%; animation: spin 800ms linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Empty state — icon + message instead of bare blank space. */
+.empty-state { text-align: center; padding: 28px 12px; color: var(--muted); }
+.empty-state .empty-icon { width: 40px; height: 40px; margin: 0 auto 10px; opacity: 0.5; }
+.empty-state .empty-icon svg { width: 100%; height: 100%; }
+
+/* HR "More" tab — native-app-style grid instead of an overcrowded scrolling nav bar. */
+.more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.more-tile {
+  background: var(--card-bg); border: 1px solid var(--border-soft); border-radius: var(--radius);
+  padding: 20px 14px; text-align: center; text-decoration: none; color: var(--text-strong);
+  display: flex; flex-direction: column; align-items: center; gap: 10px; position: relative;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06); min-height: 100px; justify-content: center;
+  transition: transform 120ms ease;
+}
+.more-tile:active { transform: scale(0.97); }
+.more-tile-icon { width: 30px; height: 30px; color: var(--primary); }
+.more-tile-icon svg { width: 100%; height: 100%; }
+.more-tile-label { font-size: 13.5px; font-weight: 700; }
+.more-tile-count { position: absolute; top: 10px; right: 10px; background: var(--bad-btn); color: #fff; font-size: 11px; font-weight: 800; min-width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; padding: 0 5px; }
+
+.bottom-nav a { transition: color 120ms ease; }
+.bottom-nav a:active .nav-icon { transform: scale(0.9); }
+.nav-icon { transition: transform 120ms ease; }
+
+.stat-card.action:active { transform: scale(0.97); }
+.stat-card { transition: transform 120ms ease; }
+
+/* Smart Insights card + mini bar chart — on-device "AI Time Guard"-style summary. */
+.insight-card { background: linear-gradient(135deg, var(--primary-tint), #ffffff); border-color: var(--border); }
+.insight-card h3 { display: flex; align-items: center; color: var(--primary-dark); }
+.insight-list { margin: 8px 0 0; padding-left: 20px; font-size: 14px; }
+.insight-list li { margin-bottom: 6px; }
+
+.bar-chart { margin-top: 6px; }
+.bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12.5px; }
+.bar-label { width: 90px; flex-shrink: 0; color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { flex: 1; background: var(--border-soft); border-radius: 6px; height: 10px; overflow: hidden; }
+.bar-fill { background: var(--primary); height: 100%; border-radius: 6px; transition: width 400ms ease; }
+.bar-value { width: 22px; text-align: right; font-weight: 700; color: var(--text-strong); flex-shrink: 0; }
+
+/* Avatar circle — worker photo or initials fallback, used on Home/Menu headers. */
+.avatar { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; background: var(--primary-tint); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--primary); font-weight: 800; font-size: 20px; flex-shrink: 0; }
+.profile-header { display: flex; align-items: center; gap: 14px; }
+.profile-header .profile-text h3 { margin-bottom: 2px; }
+
+/* Toasts — non-blocking feedback for network calls, instead of alert()s that used to
+   fire instantly for local-only actions and now need to happen after a real request. */
+.toast-container {
+  position: fixed; left: 0; right: 0; bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  pointer-events: none; z-index: 100; padding: 0 16px;
+}
+.toast {
+  max-width: 420px; width: 100%; padding: 12px 16px; border-radius: 10px; font-size: 14px; font-weight: 600;
+  color: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, 0.25);
+  animation: toast-in 200ms ease-out;
+}
+.toast.out { animation: toast-out 200ms ease-in forwards; }
+.toast.success { background: var(--accent-dark); }
+.toast.error { background: var(--bad-btn); }
+.toast.info { background: var(--primary-dark); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(8px); } }
+
+/* Registration-photo vs punch-selfie comparison — manual anti-spoofing aid for HR
+   until a real face-match vendor is sourced; lets a human catch what an automated
+   check would (e.g. a phone held up to a screen instead of a live face). */
+.compare-row { padding: 14px 0; border-bottom: 1px solid var(--border-soft); }
+.compare-pair { display: flex; gap: 14px; align-items: center; justify-content: center; }
+.compare-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.compare-item img, .compare-placeholder { width: 84px; height: 84px; border-radius: 10px; object-fit: cover; border: 2px solid var(--border); background: var(--primary-tint); }
+.compare-placeholder { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.compare-placeholder svg { width: 32px; height: 32px; }
+.compare-item span { font-size: 11px; color: var(--muted); font-weight: 600; }
+.compare-meta { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+/* Hands-free punch scan — the live native camera preview renders BEHIND the WebView
+   (toBack: true). Making backgrounds transparent isn't enough on its own: any opaque
+   element still in the layout (the Home screen's card, its content, etc.) blocks the
+   preview from showing through regardless of body/#app background. Hiding #app
+   entirely during scanning is what actually clears the whole viewport — the scan
+   overlay is appended straight to <body>, as a sibling of #app, so it stays visible. */
+body.scanning-active {
+  background: transparent !important;
+}
+body.scanning-active #app {
+  display: none !important;
+}
+.scan-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.scan-guide-ring {
+  width: 260px; height: 260px; border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.55);
+  transition: border-color 200ms ease;
+}
+.scan-guide-ring.detected { border-color: var(--accent); }
+.scan-status {
+  position: absolute; bottom: 130px; left: 16px; right: 16px; text-align: center;
+  color: #fff; font-weight: 700; font-size: 15px; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+}
+.scan-cancel { position: absolute; bottom: 56px; left: 50%; transform: translateX(-50%); }

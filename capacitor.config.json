@@ -1,0 +1,11 @@
+{
+  "appId": "com.tsg.workforce.pilot",
+  "appName": "TSG Workforce (Pilot)",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
