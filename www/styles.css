@@ -281,3 +281,43 @@ body.scanning-active #app {
   color: #fff; font-weight: 700; font-size: 15px; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
 }
 .scan-cancel { position: absolute; bottom: 56px; left: 50%; transform: translateX(-50%); }
+
+/* "My days" month calendar (R12) — coloured dot per day instead of a table row. */
+.cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.cal-header h3 { margin: 0; }
+.cal-dow { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: 11.5px; color: var(--muted); font-weight: 700; margin-top: 8px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 4px; }
+.cal-cell {
+  background: none; border: 1.5px solid transparent; border-radius: 8px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 6px 2px; min-height: 48px; font-family: inherit; color: var(--text-strong);
+}
+.cal-cell-blank { cursor: default; }
+.cal-cell.selected { border-color: var(--primary); background: var(--primary-tint); }
+.cal-daynum { font-size: 12.5px; font-weight: 600; }
+.cal-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--border-soft); }
+.cal-dot.present { background: var(--accent); }
+.cal-dot.absent { background: var(--bad-btn); }
+.cal-dot.missed { background: var(--warn-btn); }
+.cal-dot.future { background: var(--border-soft); }
+.cal-legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+.cal-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.cal-detail { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.cal-detail-date { font-weight: 700; margin-bottom: 8px; }
+.cal-detail-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 13.5px; }
+
+/* Full-screen punch result (R11) — BRD design rule 7: every result shown full screen
+   with a tick/cross, read aloud (see speak()/showResultScreen() in app.js). */
+.result-overlay {
+  position: fixed; inset: 0; z-index: 400; background: var(--card-bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 32px 24px; text-align: center;
+  animation: screen-in 180ms ease-out;
+}
+.result-icon { width: 96px; height: 96px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; }
+.result-icon svg { width: 52px; height: 52px; }
+.result-icon.ok { background: var(--accent-tint); color: var(--accent-dark); }
+.result-icon.bad { background: var(--bad-tint); color: var(--bad); }
+.result-title { font-size: 24px; margin: 0 0 8px; }
+.result-subtitle { color: var(--muted); margin: 0 0 28px; max-width: 320px; }
+.result-ok { max-width: 320px; }

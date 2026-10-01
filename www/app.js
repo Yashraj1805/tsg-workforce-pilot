@@ -77,6 +77,28 @@ function toast(message, type) {
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 250); }, 3200);
 }
 
+// ---------------- Voice + full-screen result (R11) ----------------
+// BRD design rule 7 / R11: "Every result is shown full screen with a green tick or red
+// cross, and read aloud." Uses the device's native TTS engine (via TSGNative.speak) so
+// Hindi actually gets spoken — the WebView's own speechSynthesis is unreliable/missing
+// Hindi voices on a lot of real Android devices, a native engine isn't.
+function speak(text) {
+  try { window.TSGNative.speak && window.TSGNative.speak(text, currentLang === 'hi' ? 'hi-IN' : 'en-IN'); } catch (e) { /* no-op in dev/web */ }
+}
+function showResultScreen(ok, title, subtitle) {
+  const el = document.createElement('div');
+  el.className = 'result-overlay';
+  el.innerHTML = `
+    <div class="result-icon ${ok ? 'ok' : 'bad'}">${ok ? icon('check') : icon('warn')}</div>
+    <h2 class="result-title">${esc(title)}</h2>
+    ${subtitle ? `<p class="result-subtitle">${esc(subtitle)}</p>` : ''}
+    <button class="btn ${ok ? 'success' : 'danger'} block big result-ok">${t('resultOk')}</button>
+  `;
+  document.body.appendChild(el);
+  el.querySelector('.result-ok').onclick = () => el.remove();
+  speak(title + (subtitle ? '. ' + subtitle : ''));
+}
+
 // ---------------- Async render helper ----------------
 // Shows a loading spinner immediately, runs `fetcher`, then either renders the result
 // via `onSuccess` or shows a retry state on failure (e.g. server unreachable).
@@ -758,55 +780,117 @@ async function doPunch() {
 
   try {
     const result = await window.Api.punch({ type, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, selfieDataUrl: selfie.dataUrl });
-    toast(t('punchAccepted') + (type === 'in' ? ' — ' + t('punchIn') : ' — ' + t('punchOut')), 'success');
     renderWorkerHome();
+    showResultScreen(true, t('punchAccepted'), type === 'in' ? t('punchIn') : t('punchOut'));
   } catch (e) {
     const d = e.data || {};
     const detail = d.distanceM != null ? ` (${d.distanceM}m away, accuracy ${Math.round(d.accuracy||0)}m)` : '';
-    toast(t('punchBlocked') + ': ' + e.message + detail, 'error');
     renderWorkerHome();
+    showResultScreen(false, t('punchBlocked'), e.message + detail);
   }
 }
 
+// ---------------- Worker: "My days" calendar (R12) ----------------
+// BRD screen 9: a month calendar with a coloured dot per day — green present, red
+// absent, yellow missed punch, grey for days that haven't happened yet — rather than
+// a plain table. Tapping a day shows its detail (and the call-site-HR action for a
+// problem day) below the grid instead of a row-by-row list.
+let calState = null;
+let calSelectedDay = null;
+
 function renderWorkerAttendance() {
   if (!requireWorker()) return;
+  if (!calState) {
+    const n = new Date();
+    calState = { year: n.getFullYear(), month: n.getMonth() };
+  }
+  loadWorkerAttendance();
+}
+function shiftCalMonth(delta) {
+  calState.month += delta;
+  if (calState.month < 0) { calState.month = 11; calState.year--; }
+  if (calState.month > 11) { calState.month = 0; calState.year++; }
+  calSelectedDay = null;
+  loadWorkerAttendance();
+}
+function selectCalDay(dayStr) {
+  calSelectedDay = (calSelectedDay === dayStr) ? null : dayStr;
   loadWorkerAttendance();
 }
 async function loadWorkerAttendance() {
   renderShell(`<div class="card">${spinnerRow('Loading…')}</div>`);
   try {
     const [punches, myRegs] = await Promise.all([window.Api.myPunches(), window.Api.myRegularisations()]);
-    const days = [];
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    for (let d = new Date(start); d <= now; d.setDate(d.getDate() + 1)) {
-      const dayStr = d.toISOString().slice(0, 10);
-      const st = attendanceStatusForDay(punches, dayStr);
-      const reg = myRegs.find(r => r.date === dayStr);
-      days.push({ dayStr, ...st, regularised: reg && reg.status === 'approved', regPending: reg && reg.status === 'pending' });
-    }
-    days.reverse();
-    renderShell(`
-      <div class="card">
-        <h3>${t('attendance')}</h3>
-        <p class="muted small">${t('missedPunchHint')}</p>
-        <table class="tbl">
-          <thead><tr><th>${t('date')}</th><th>In</th><th>Out</th><th>Hrs</th><th>${t('status')}</th><th></th></tr></thead>
-          <tbody>
-            ${days.map(d => `<tr>
-              <td>${d.dayStr}</td><td>${fmtTime(d.inTime)}</td><td>${fmtTime(d.outTime)}</td><td>${d.hours||'-'}</td>
-              <td>${d.regularised && d.status!=='present' ? statusBadge('present') + ' <span class="badge badge-neutral">Regularised</span>' : statusBadge(d.status)}</td>
-              <td>${(d.status==='absent' || d.status==='missed_punch_out') && !d.regularised ?
-                (d.regPending ? `<span class="muted small">Pending</span>` : `<button class="btn warn small" onclick="callSiteHr()">${t('callSiteHr')}</button>`)
-                : ''}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-    `);
+    renderShell(buildAttendanceCalendar(punches, myRegs));
   } catch (e) {
     renderShell(`<div class="card">${errorState(e.message)}</div>`);
   }
+}
+function buildAttendanceCalendar(punches, myRegs) {
+  const { year, month } = calState;
+  const monthLabel = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayDayStr = todayStr(Date.now());
+
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d).toISOString().slice(0, 10));
+
+  const dotsHtml = cells.map(dayStr => {
+    if (!dayStr) return `<div class="cal-cell cal-cell-blank"></div>`;
+    const dayNum = parseInt(dayStr.slice(8), 10);
+    if (dayStr > todayDayStr) {
+      return `<div class="cal-cell"><span class="cal-daynum muted">${dayNum}</span><span class="cal-dot future"></span></div>`;
+    }
+    const st = attendanceStatusForDay(punches, dayStr);
+    const reg = myRegs.find(r => r.date === dayStr);
+    const regularised = reg && reg.status === 'approved';
+    const cls = (st.status === 'present' || st.status === 'half_day' || regularised) ? 'present'
+      : st.status === 'missed_punch_out' ? 'missed' : 'absent';
+    const selected = calSelectedDay === dayStr ? ' selected' : '';
+    return `<button class="cal-cell${selected}" onclick="selectCalDay('${dayStr}')">
+      <span class="cal-daynum">${dayNum}</span><span class="cal-dot ${cls}"></span>
+    </button>`;
+  }).join('');
+
+  let detailHtml = '';
+  if (calSelectedDay) {
+    const st = attendanceStatusForDay(punches, calSelectedDay);
+    const reg = myRegs.find(r => r.date === calSelectedDay);
+    const regularised = reg && reg.status === 'approved';
+    const regPending = reg && reg.status === 'pending';
+    detailHtml = `
+      <div class="cal-detail">
+        <div class="cal-detail-date">${calSelectedDay}</div>
+        <div class="cal-detail-row"><span>${t('status')}</span>${regularised && st.status !== 'present' ? statusBadge('present') + ' <span class="badge badge-neutral">Regularised</span>' : statusBadge(st.status)}</div>
+        <div class="cal-detail-row"><span>In</span><span>${fmtTime(st.inTime)}</span></div>
+        <div class="cal-detail-row"><span>Out</span><span>${fmtTime(st.outTime)}</span></div>
+        ${(st.status === 'absent' || st.status === 'missed_punch_out') && !regularised
+          ? (regPending ? `<p class="muted small">${t('pendingReview')}</p>` : `<button class="btn warn small block" onclick="callSiteHr()">${t('callSiteHr')}</button>`)
+          : ''}
+      </div>`;
+  }
+
+  return `
+    <div class="card">
+      <div class="cal-header">
+        <button class="btn secondary small" onclick="shiftCalMonth(-1)" aria-label="Previous month">‹</button>
+        <h3>${monthLabel}</h3>
+        <button class="btn secondary small" onclick="shiftCalMonth(1)" aria-label="Next month">›</button>
+      </div>
+      <p class="muted small">${t('missedPunchHint')}</p>
+      <div class="cal-dow">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span>${d}</span>`).join('')}</div>
+      <div class="cal-grid">${dotsHtml}</div>
+      <div class="cal-legend">
+        <span><span class="cal-dot present"></span> ${t('calPresent')}</span>
+        <span><span class="cal-dot absent"></span> ${t('calAbsent')}</span>
+        <span><span class="cal-dot missed"></span> ${t('calMissed')}</span>
+        <span><span class="cal-dot future"></span> ${t('calNotYet')}</span>
+      </div>
+      ${detailHtml}
+    </div>
+  `;
 }
 function callSiteHr() {
   const w = window._myWorker;
@@ -910,8 +994,27 @@ async function hrVerifyOtp() {
 function requireHr() {
   const s = getSession();
   if (!s || s.role !== 'hr') { location.hash = '#/'; render(); return null; }
+  hrLastActivity = Date.now(); // viewing any HR screen counts as activity, not just taps (R18)
   return s;
 }
+
+// ---------------- HR: 15-minute idle auto-logout (R18) ----------------
+// BRD: "Admin login ... Logout after 15 minutes without use." Tracked with a plain
+// timestamp updated on user input, checked periodically — only ever acts while an HR
+// session exists, never for workers (the BRD only specifies this for the admin side).
+const HR_IDLE_LIMIT_MS = 15 * 60 * 1000;
+let hrLastActivity = Date.now();
+['click', 'touchstart', 'keydown', 'scroll'].forEach(evt =>
+  document.addEventListener(evt, () => { hrLastActivity = Date.now(); }, { passive: true })
+);
+setInterval(() => {
+  const s = getSession();
+  if (s && s.role === 'hr' && Date.now() - hrLastActivity > HR_IDLE_LIMIT_MS) {
+    clearSessionData();
+    location.hash = '#/'; render();
+    toast(t('hrIdleLoggedOut'), 'info');
+  }
+}, 30000);
 
 // ---------------- HR: dashboard ----------------
 

@@ -2,6 +2,7 @@ import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Geolocation } from '@capacitor/geolocation';
 import { CameraPreview } from '@capacitor-community/camera-preview';
 import { App } from '@capacitor/app';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
 // Exposes a small, promise-based bridge the plain app.js script can call.
 // Falls back gracefully if running in a plain desktop browser during development.
@@ -127,4 +128,15 @@ async function minimizeApp() {
   try { await App.minimizeApp(); } catch (err) { /* web/dev fallback: no-op */ }
 }
 
-window.TSGNative = { takeSelfie, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };
+// ---- Voice (R11 / design rule 2: "a voice reads every screen"). Goes through the
+// device's own TTS engine rather than the WebView's speechSynthesis — a lot of real
+// Android devices either lack a Hindi voice there or don't implement it at all, while
+// the OS-level engine (used here) is what Hindi language packs actually install into. ----
+async function speak(text, lang) {
+  try { await TextToSpeech.speak({ text, lang: lang || 'en-IN', rate: 0.95, category: 'ambient' }); } catch (err) { /* no-op: voice is a convenience, never block on it */ }
+}
+async function stopSpeaking() {
+  try { await TextToSpeech.stop(); } catch (err) { /* already stopped */ }
+}
+
+window.TSGNative = { takeSelfie, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp, speak, stopSpeaking };
