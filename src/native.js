@@ -3,6 +3,7 @@ import { Geolocation } from '@capacitor/geolocation';
 import { CameraPreview } from '@capacitor-community/camera-preview';
 import { App } from '@capacitor/app';
 import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
 // Exposes a small, promise-based bridge the plain app.js script can call.
 // Falls back gracefully if running in a plain desktop browser during development.
@@ -144,6 +145,29 @@ async function takeDocumentPhoto() {
   }
 }
 
+// ---- Voice (BRD design rule 2 "A voice reads every screen", R11 voice result) ----
+// Android's own text-to-speech engine (works offline once the Hindi voice is installed,
+// which most Indian phones ship with). Falls back to the browser's speechSynthesis.
+async function speakText(text, lang) {
+  try {
+    await TextToSpeech.stop().catch(() => {});
+    await TextToSpeech.speak({ text, lang: lang || 'hi-IN', rate: 0.9, pitch: 1.0, volume: 1.0, category: 'playback' });
+    return { ok: true };
+  } catch (err) {
+    try {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text); u.lang = lang || 'hi-IN'; window.speechSynthesis.speak(u);
+        return { ok: true };
+      }
+    } catch (e) { /* no voice available */ }
+    return { ok: false, error: (err && err.message) || 'Voice unavailable' };
+  }
+}
+async function stopSpeaking() {
+  try { await TextToSpeech.stop(); } catch (e) { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e2) { /* ignore */ } }
+}
+
 async function getPosition() {
   try {
     const perm = await Geolocation.requestPermissions().catch(() => null);
@@ -172,4 +196,4 @@ async function minimizeApp() {
   try { await App.minimizeApp(); } catch (err) { /* web/dev fallback: no-op */ }
 }
 
-window.TSGNative = { takeSelfie, scanQrCode, takeDocumentPhoto, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };
+window.TSGNative = { takeSelfie, scanQrCode, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };

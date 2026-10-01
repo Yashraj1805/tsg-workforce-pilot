@@ -13,6 +13,41 @@ const GPS_ACCURACY_LIMIT_M = 100; // fallback if a location has no accuracy_limi
 function fmtTime(ts) { if (!ts) return '--'; const d = new Date(ts); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
+// ---------------- Voice (BRD design rule 2, R11) ----------------
+// Reads a screen or a result aloud in the worker's chosen language (Hindi by default).
+// On by default for worker screens — "Many workers can read very little" — and can be
+// switched off from the worker menu. `force` speaks even when voice is off (Listen again).
+const VOICE_KEY = 'tsg_voice';
+function voiceOn() { try { return localStorage.getItem(VOICE_KEY) !== 'off'; } catch (e) { return true; } }
+function setVoice(on) { try { localStorage.setItem(VOICE_KEY, on ? 'on' : 'off'); } catch (e) { /* ignore */ } if (!on) stopVoice(); }
+function speak(hi, en, force) {
+  if (!force && !voiceOn()) return;
+  if (!window.TSGNative || !window.TSGNative.speakText) return;
+  const useHindi = currentLang !== 'en';
+  const text = (useHindi ? hi : en) || hi || en;
+  if (text) window.TSGNative.speakText(String(text).replace(/<[^>]+>/g, ''), useHindi ? 'hi-IN' : 'en-IN');
+}
+function stopVoice() { if (window.TSGNative && window.TSGNative.stopSpeaking) window.TSGNative.stopSpeaking(); }
+
+// Design rule 9 (low-cost phones, weak networks): photos are shrunk on the phone before
+// upload — a full-resolution camera frame is several MB.
+function shrinkDataUrl(dataUrl, maxDim, quality) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      if (scale === 1 && dataUrl.length < 400000) { resolve(dataUrl); return; }
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', quality || 0.8));
+    };
+    img.onerror = () => resolve(dataUrl);
+    setTimeout(() => resolve(dataUrl), 4000); // never block an upload on a decoder that stalls
+    img.src = dataUrl;
+  });
+}
+
 function statusBadge(status) {
   const map = {
     present: ['badge-ok', 'Present'], half_day: ['badge-warn', 'Half day'],
@@ -383,6 +418,22 @@ function saveApiBase() {
   location.hash = '#/'; render();
 }
 
+// BRD §10 screen 3: "Resend after 30 s." The button counts down, then enables. (The
+// server enforces the same wait and the 15-minute lock after 3 wrong OTPs.)
+let resendTimer = null;
+function resendOtpButton(onclickJs, seconds) {
+  clearInterval(resendTimer);
+  let left = seconds || 30;
+  resendTimer = setInterval(() => {
+    const b = document.getElementById('resendOtpBtn');
+    if (!b) { clearInterval(resendTimer); return; }
+    left -= 1;
+    if (left <= 0) { clearInterval(resendTimer); b.disabled = false; b.textContent = 'Resend OTP / OTP फिर भेजें'; }
+    else b.textContent = `Resend OTP in ${left} s`;
+  }, 1000);
+  return `<button id="resendOtpBtn" class="link-btn small" disabled onclick="${onclickJs}">Resend OTP in ${left} s</button>`;
+}
+
 // ---------------- Worker: login ----------------
 
 let loginState = {};
@@ -397,8 +448,8 @@ function startWorkerLogin() {
     </div>
   `);
 }
-async function workerRequestOtp() {
-  const mobile = document.getElementById('loginMobile').value.trim();
+async function workerRequestOtp(resend) {
+  const mobile = resend ? loginState.mobile : document.getElementById('loginMobile').value.trim();
   if (!/^\d{10}$/.test(mobile)) { toast(t('invalidMobile'), 'error'); return; }
   try {
     const result = await window.Api.workerOtpRequest(mobile);
@@ -407,7 +458,8 @@ async function workerRequestOtp() {
       <div class="card center-card">
         <h3>${t('enterOtp')}</h3>
         <p class="muted small">${result.devOtp ? `${t('otpHint')}: ${result.devOtp}` : `OTP sent to ${esc(mobile)}`}</p>
-        <input id="loginOtp" class="input" maxlength="6" inputmode="numeric" />
+        <input id="loginOtp" class="input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" />
+        ${resendOtpButton("workerRequestOtp(true)", result.resendInSeconds)}
         <button class="btn primary block" onclick="workerVerifyOtp()">${t('verify')}</button>
       </div>
     `);
@@ -434,60 +486,139 @@ function requireWorker() {
 
 // ---------------- Worker: registration wizard ----------------
 
+// BRD §10 registration, one task per screen (design rule 6), in the BRD's order:
+// consent → photo → Aadhaar → PAN → job → vendor + site → education → review.
+// Headings are Hindi first, English below (rule 2) and each step is read aloud; choices
+// are picture tiles with a tick (rule 5). Everything is saved to the server as the
+// worker goes, so leaving and coming back resumes where they were.
 let regState = { step: 1 };
+const REG_STEPS = 8;
+
+// Hindi first, English below.
+function bi(hi, en) { return `<span class="bi-hi">${hi}</span><span class="bi-en">${en}</span>`; }
+function regHeader(n, hi, en) {
+  speak(hi, en);
+  return `<div class="muted small">${n} / ${REG_STEPS}</div><div class="step-bar"><div style="width:${Math.round(n / REG_STEPS * 100)}%"></div></div><h3>${bi(hi, en)}</h3>`;
+}
+function regNav(back, nextLabel, nextFn, disabled) {
+  return `<div class="wizard-actions">
+    ${back ? `<button class="btn secondary" onclick="renderRegStep(${back})">${t('back')}</button>` : '<span></span>'}
+    ${nextFn ? `<button class="btn primary" ${disabled ? 'disabled' : ''} onclick="${nextFn}">${nextLabel || t('next')}</button>` : ''}
+  </div>`;
+}
+// Picture tiles with a tick (rule 5). `field` is the worker property; `pick` the handler.
+function tiles(items, selected, pick) {
+  return `<div class="tile-grid">${items.map(i => `
+    <button class="tile ${i.id === selected ? 'selected' : ''}" onclick="${pick}('${i.id}')">
+      <span class="tile-icon">${i.icon || '•'}</span>
+      <span class="tile-hi">${esc(i.hi || i.name_hi || '')}</span>
+      <span class="tile-en">${esc(i.en || i.name || '')}</span>
+      ${i.id === selected ? '<span class="tile-tick">✓</span>' : ''}
+    </button>`).join('')}</div>`;
+}
 
 function renderRegister() {
   if (!requireWorker()) return;
-  withLoading(() => window.Api.getMe(), (w) => {
-    regState = { ...regState, worker: w };
+  withLoading(() => Promise.all([window.Api.getMe(), window.Api.registrationOptions()]), ([w, opts]) => {
+    regState = { ...regState, worker: w, opts };
     if (w.status !== 'draft' && w.status !== 'sent_back') { location.hash = w.status === 'approved' ? '#/w/home' : '#/w/pending'; render(); return; }
+    // Resume at the first unfinished step.
+    if (!regState.resumed) {
+      regState.resumed = true;
+      const done = [w.consent_version === opts.consent.version, !!w.photo_data_url, !!(w.aadhaar_qr_at || w.aadhaar_verified) && !!w.name,
+        !!w.pan_verified, !!w.job_id, !!(w.vendor_id && w.location_id), !!w.qualification];
+      const first = done.indexOf(false);
+      regState.step = first === -1 ? REG_STEPS : first + 1;
+    }
     renderRegStep(regState.step || 1);
   });
 }
 
 async function renderRegStep(step) {
   regState.step = step;
-  if (step === 1) return renderRegStep1();
-  if (step === 2) return renderRegStep2();
-  return renderRegStep3();
+  return [null, regConsent, regPhoto, regAadhaar, regPan, regJob, regVendorSite, regEducation, regReview][step]();
+}
+async function regSave(fields, nextStep) {
+  try {
+    regState.worker = await window.Api.updateMe(fields);
+    if (nextStep) renderRegStep(nextStep);
+    return true;
+  } catch (e) { toast(e.message, 'error'); return false; }
 }
 
-function renderRegStep1() {
+// ---- 1 Consent (screen 4: read aloud, tick required, saved with date/time/version) ----
+function regConsent() {
+  const c = regState.opts.consent;
+  const w = regState.worker;
+  const accepted = w.consent_version === c.version;
+  renderShell(`
+    <div class="card">
+      ${regHeader(1, 'सहमति', 'Consent')}
+      <p class="consent-text bi-hi">${esc(c.hi)}</p>
+      <p class="consent-text bi-en">${esc(c.en)}</p>
+      <button class="btn secondary small" onclick="speak(regState.opts.consent.hi, regState.opts.consent.en, true)">🔊 ${bi('फिर से सुनें', 'Listen again')}</button>
+      <label class="consent-row" style="margin-top:14px"><input type="checkbox" id="f_consent" ${accepted ? 'checked' : ''} /><span>${bi('मैं सहमत हूँ', 'I agree')}</span></label>
+      ${regNav(null, null, 'regConsentNext()')}
+    </div>`);
+}
+async function regConsentNext() {
+  if (!document.getElementById('f_consent').checked) { toast('Tick "I agree" to continue', 'error'); return; }
+  try {
+    regState.worker = await window.Api.giveConsent(regState.opts.consent.version, currentLang);
+    renderRegStep(2);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- 2 Face photo (screen 5: live camera only, one live face — checked by the server) ----
+function regPhoto() {
   const w = regState.worker;
   renderShell(`
     <div class="card">
-      <h3>Aadhaar card</h3>
+      ${regHeader(2, 'अपनी फोटो लें', 'Take your photo')}
+      <p class="muted small">${bi('कैमरे की ओर सीधे देखें। फोटो में सिर्फ़ आप हों।', 'Look straight at the camera. Only you in the photo.')}</p>
+      <div class="selfie-frame">
+        ${w.photo_data_url ? `<img src="${w.photo_data_url}" class="selfie-preview" />` : `<div class="selfie-placeholder"><span class="icon-inline" style="width:28px;height:28px;margin:0 0 6px">${icon('camera')}</span></div>`}
+      </div>
+      <button class="btn ${w.photo_data_url ? 'secondary' : 'primary'} block big" onclick="regCapturePhoto()">📷 ${w.photo_data_url ? bi('फिर से लें', 'Retake') : bi('फोटो लें', 'Take photo')}</button>
+      ${regNav(1, null, 'renderRegStep(3)', !w.photo_data_url)}
+    </div>`);
+}
+async function regCapturePhoto() {
+  const res = await window.TSGNative.takeSelfie(isAssisted() ? 'REAR' : 'FRONT');
+  if (!res.ok) { toast('Camera failed: ' + res.error, 'error'); return; }
+  const small = await shrinkDataUrl(res.dataUrl, 960, 0.8);
+  toast('Checking photo…', 'info');
+  if (await regSave({ photoDataUrl: small })) renderRegStep(2);
+}
+
+// ---- 3 Aadhaar QR (screen 6) — fills name, father's name, DOB, gender, address ----
+function regAadhaar() {
+  const w = regState.worker;
+  renderShell(`
+    <div class="card">
+      ${regHeader(3, 'आधार कार्ड', 'Aadhaar card')}
       ${w.aadhaar_qr_at
-        ? `<div class="kyc-status ok">✅ Aadhaar scanned — ${esc(w.aadhaar_masked || '')}</div>`
-        : `<p class="muted small">Scan the QR code on the Aadhaar card — your details below fill in by themselves.</p>`}
+        ? `<div class="kyc-status ok">✅ ${bi('आधार स्कैन हो गया', 'Aadhaar scanned')} — ${esc(w.aadhaar_masked || '')}</div>`
+        : `<p class="muted small">${bi('आधार कार्ड पर बने QR कोड को स्कैन करें — आपकी जानकारी अपने-आप भर जाएगी।', 'Scan the QR code on the Aadhaar card — your details fill in by themselves.')}</p>`}
       ${regState.aadhaarNameWarning ? `<div class="gps-status bad">Name on Aadhaar is "${esc(regState.aadhaarNameWarning)}" — your name below must match it.
         <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">Use Aadhaar name</button></div>` : ''}
-      <button class="btn ${w.aadhaar_qr_at ? 'secondary' : 'primary'} block big" onclick="regScanAadhaar()"><span class="icon-inline">${icon('camera')}</span> ${w.aadhaar_qr_at ? 'Scan again' : 'Scan Aadhaar QR'}</button>
-    </div>
-    <div class="card">
-      <h3>${t('personalDetails')}</h3>
-      <label>${t('fullName')}</label><input id="f_name" class="input" value="${esc(w.name||'')}" />
-      <label>${t('fatherName')}</label><input id="f_father" class="input" value="${esc(w.father_name||'')}" />
-      <label>${t('dob')}</label><input id="f_dob" type="date" class="input" value="${esc(w.dob||'')}" />
-      <label>${t('gender')}</label>
-      <select id="f_gender" class="input">
-        <option value="male" ${w.gender==='male'?'selected':''}>${t('male')}</option>
-        <option value="female" ${w.gender==='female'?'selected':''}>${t('female')}</option>
-        <option value="other" ${w.gender==='other'?'selected':''}>${t('other')}</option>
-      </select>
-      <label>${t('address')}</label><textarea id="f_address" class="input">${esc(w.address||'')}</textarea>
-      <label>${t('emergencyContact')}</label><input id="f_emg" class="input" maxlength="10" value="${esc(w.emergency_contact||'')}" />
-      <label>${t('qualification')}</label><input id="f_qual" class="input" value="${esc(w.qualification||'')}" />
-      <label>${t('experience')}</label><input id="f_exp" type="number" min="0" class="input" value="${esc(w.experience||'')}" />
-      <div class="wizard-actions">
-        <span></span>
-        <button class="btn primary" onclick="regStep1Next()">${t('next')}</button>
-      </div>
-    </div>
-  `);
+      <button class="btn ${w.aadhaar_qr_at ? 'secondary' : 'primary'} block big" onclick="regScanAadhaar()">📷 ${w.aadhaar_qr_at ? bi('फिर से स्कैन करें', 'Scan again') : bi('आधार QR स्कैन करें', 'Scan Aadhaar QR')}</button>
+      ${w.aadhaar_qr_at || w.name ? `
+        <label>${t('fullName')}</label><input id="f_name" class="input" value="${esc(w.name||'')}" />
+        <label>${t('fatherName')}</label><input id="f_father" class="input" value="${esc(w.father_name||'')}" />
+        <label>${t('dob')}</label><input id="f_dob" type="date" class="input" value="${esc(w.dob||'')}" />
+        <label>${t('gender')}</label>
+        <select id="f_gender" class="input">
+          <option value="male" ${w.gender==='male'?'selected':''}>${t('male')}</option>
+          <option value="female" ${w.gender==='female'?'selected':''}>${t('female')}</option>
+          <option value="other" ${w.gender==='other'?'selected':''}>${t('other')}</option>
+        </select>
+        <label>${t('address')}</label><textarea id="f_address" class="input">${esc(w.address||'')}</textarea>
+        <label>${t('emergencyContact')}</label><input id="f_emg" class="input" maxlength="10" inputmode="numeric" value="${esc(w.emergency_contact||'')}" />` : ''}
+      ${regNav(2, null, 'regAadhaarNext()', !(w.aadhaar_qr_at || w.name))}
+    </div>`);
 }
-// R04: Aadhaar captured by scanning its QR. The server decodes it, keeps only the
-// masked number, and fills any empty name/DOB/gender — so re-render with what it saved.
+// R04: the server decodes the QR, keeps only the masked number, and fills empty fields.
 async function regScanAadhaar() {
   const scan = await window.TSGNative.scanQrCode();
   if (!scan.ok) { if (!scan.cancelled) toast(scan.error, 'error'); return; }
@@ -498,7 +629,7 @@ async function regScanAadhaar() {
     // a draft), but submit will — so say so now, with the Aadhaar name to copy.
     regState.aadhaarNameWarning = result.nameMatches === false ? result.name : null;
     toast(`Aadhaar scanned (…${result.last4})`, result.nameMatches === false ? 'error' : 'success');
-    renderRegStep(regState.step);
+    renderRegStep(3);
   } catch (e) { toast(e.message, 'error'); }
 }
 function useAadhaarName(btn) {
@@ -506,121 +637,50 @@ function useAadhaarName(btn) {
   regState.aadhaarNameWarning = null;
   btn.parentNode.remove();
 }
-async function regStep1Next() {
+async function regAadhaarNext() {
   const get = id => document.getElementById(id).value.trim();
-  const fields = {
-    name: get('f_name'), fatherName: get('f_father'), dob: get('f_dob'), gender: get('f_gender'),
-    address: get('f_address'), emergencyContact: get('f_emg'), qualification: get('f_qual'), experience: get('f_exp'),
-  };
+  const fields = { name: get('f_name'), fatherName: get('f_father'), dob: get('f_dob'), gender: get('f_gender'), address: get('f_address'), emergencyContact: get('f_emg') };
   if (!fields.name) { toast('Name is required', 'error'); return; }
-  try {
-    regState.worker = await window.Api.updateMe(fields);
-    renderRegStep(2);
-  } catch (e) { toast(e.message, 'error'); }
+  regSave(fields, 4);
 }
 
-async function renderRegStep2() {
-  await withLoading(
-    () => Promise.all([window.Api.listVendors(), window.Api.listLocations()]),
-    ([allVendors, allLocations]) => {
-      const w = regState.worker;
-      // Assisted registration: the worker is registered at the Site HR's own site.
-      const locations = isAssisted() ? allLocations.filter(l => l.id === w.location_id) : allLocations;
-      // R01: only vendors with a current contract (the server refuses others anyway).
-      const today = todayStr(Date.now());
-      const vendors = allVendors.filter(v => v.id === w.vendor_id || (v.status !== 'inactive' && !(v.contract_end && v.contract_end < today) && !(v.contract_start && v.contract_start > today)));
-      const blocked = vendors.length === 0 || locations.length === 0;
-      renderShell(`
-        <div class="card">
-          <h3>${t('workDetails')}</h3>
-          ${blocked ? `<div class="gps-status bad">${t('noVendorsLocationsYet')}</div>` : ''}
-          <label>${t('vendor')}</label>
-          <select id="f_vendor" class="input" ${vendors.length===0?'disabled':''}>${vendors.length===0 ? `<option value="">${t('none')}</option>` : vendors.map(v=>`<option value="${v.id}" ${w.vendor_id===v.id?'selected':''}>${esc(v.name)}</option>`).join('')}</select>
-          <label>${t('location')}</label>
-          <select id="f_location" class="input" ${locations.length===0?'disabled':''}>${locations.length===0 ? `<option value="">${t('none')}</option>` : locations.map(l=>`<option value="${l.id}" ${w.location_id===l.id?'selected':''}>${esc(l.name)}</option>`).join('')}</select>
-          <label>${t('designation')}</label><input id="f_designation" class="input" value="${esc(w.designation||'')}" />
-          <label>${t('doj')}</label><input id="f_doj" type="date" class="input" value="${esc(w.doj||'')}" />
-          <h3>${t('capturePhoto')}</h3>
-          <div class="selfie-frame">
-            ${w.photo_data_url ? `<img src="${w.photo_data_url}" class="selfie-preview" />` : `<div class="selfie-placeholder"><span class="icon-inline" style="width:28px;height:28px;margin:0 0 6px">${icon('camera')}</span><br/>No photo yet</div>`}
-          </div>
-          <button class="btn secondary block" onclick="regCapturePhoto()">${w.photo_data_url ? t('retake') : t('capturePhoto')}</button>
-          <div class="wizard-actions">
-            <button class="btn secondary" onclick="renderRegStep(1)">${t('back')}</button>
-            <button class="btn primary" ${blocked?'disabled':''} onclick="regStep2Next()">${t('next')}</button>
-          </div>
-        </div>
-      `);
-    }
-  );
-}
-async function regCapturePhoto() {
-  const res = await window.TSGNative.takeSelfie(isAssisted() ? 'REAR' : 'FRONT');
-  if (!res.ok) { toast('Camera failed: ' + res.error, 'error'); return; }
-  try {
-    regState.worker = await window.Api.updateMe({ photoDataUrl: res.dataUrl });
-    renderRegStep(2);
-  } catch (e) { toast(e.message, 'error'); }
-}
-async function regStep2Next() {
-  const get = id => document.getElementById(id).value.trim();
-  if (!regState.worker.photo_data_url) { toast('Please capture a live photo before continuing', 'error'); return; }
-  try {
-    regState.worker = await window.Api.updateMe({
-      vendorId: get('f_vendor'), locationId: get('f_location'), designation: get('f_designation'), doj: get('f_doj'),
-    });
-    renderRegStep(3);
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-function renderRegStep3() {
+// ---- 4 PAN photo + verification (screen 7), DigiLocker Aadhaar OTP ----
+function regPan() {
   const w = regState.worker;
   renderShell(`
     <div class="card">
-      <h3>Aadhaar</h3>
-      <div class="kyc-status ${w.aadhaar_qr_at?'ok':''}">${w.aadhaar_qr_at ? `✅ Card scanned — ${esc(w.aadhaar_masked || '')}` : '⏳ Card not scanned yet'}</div>
-      ${!w.aadhaar_qr_at ? `<button class="btn secondary block" onclick="regScanAadhaar()"><span class="icon-inline">${icon('camera')}</span> Scan Aadhaar QR</button>` : ''}
-      <div class="kyc-status ${w.aadhaar_verified?'ok':''}">${w.aadhaar_verified ? '✅ Aadhaar verified (OTP via DigiLocker)' : '⏳ Not yet verified'}</div>
-      ${!w.aadhaar_verified ? `<button class="btn secondary block" onclick="startDigilocker()">Verify with DigiLocker (Aadhaar OTP)</button>` : ''}
-
-      <h3 style="margin-top:18px">PAN</h3>
-      <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ PAN verified' : '⏳ Not yet verified'}</div>
+      ${regHeader(4, 'पैन कार्ड और जाँच', 'PAN card and verification')}
+      <div class="kyc-status ${w.aadhaar_verified?'ok':''}">${w.aadhaar_verified ? '✅ Aadhaar verified (OTP via DigiLocker)' : '⏳ Aadhaar not yet verified'}</div>
+      ${!w.aadhaar_verified ? `<button class="btn secondary block" onclick="startDigilocker()">Verify Aadhaar with OTP (DigiLocker)</button>` : ''}
+      <div class="kyc-status ${w.pan_verified?'ok':''}" style="margin-top:12px">${w.pan_verified ? '✅ PAN verified' : '⏳ PAN not yet verified'}</div>
       ${!w.pan_verified ? `
         ${w.pan_photo_data_url ? `<img src="${w.pan_photo_data_url}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
         ${regState.panRead ? `<div class="kyc-status">PAN read from photo: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
           <button class="btn primary block" onclick="verifyPan(true)">Yes, verify this PAN</button>` : ''}
-        <button class="btn secondary block" onclick="regPanPhoto()"><span class="icon-inline">${icon('camera')}</span> ${w.pan_photo_data_url ? 'Retake PAN photo' : 'Take photo of PAN card'}</button>
+        <button class="btn secondary block" onclick="regPanPhoto()">📷 ${w.pan_photo_data_url ? bi('पैन की फोटो फिर से लें', 'Retake PAN photo') : bi('पैन कार्ड की फोटो लें', 'Take photo of PAN card')}</button>
         ${regState.panManual ? `
           <input id="f_pan" class="input" maxlength="10" placeholder="ABCDE1234F" style="text-transform:uppercase" />
           <button class="btn secondary block" onclick="verifyPan(false)">Verify PAN</button>
-        ` : `<button class="link-btn small" onclick="regState.panManual=true;renderRegStep(3)">Can't take a photo? Type the PAN instead</button>`}
+        ` : `<button class="link-btn small" onclick="regState.panManual=true;renderRegStep(4)">Can't take a photo? Type the PAN instead</button>`}
       ` : ''}
-
       ${(!w.aadhaar_verified || !w.pan_verified) ? `
         <div class="gps-status warn" style="margin-top:16px">
           <div>${t('devSkipHint')}</div>
           <button class="btn warn block" style="margin-top:8px" onclick="skipKycDev()">${t('devSkipButton')}</button>
-        </div>
-      ` : ''}
-
-      <label class="consent-row" style="margin-top:16px">
-        <input type="checkbox" id="f_consent" />
-        <span>${t('consent')}</span>
-      </label>
-
-      <div class="wizard-actions">
-        <button class="btn secondary" onclick="renderRegStep(2)">${t('back')}</button>
-        <button class="btn primary" ${(w.aadhaar_verified && w.pan_verified) ? '' : 'disabled'} onclick="regSubmit()">${t('submitRegistration')}</button>
-      </div>
-    </div>
-  `);
+        </div>` : ''}
+      <details style="margin-top:12px"><summary class="link-btn small">${bi('बैंक पासबुक (अगर ज़रूरत हो)', 'Bank passbook (if needed)')}</summary>
+        ${w.bank_passbook_data_url ? `<img src="${w.bank_passbook_data_url}" class="selfie-preview" style="border-radius:8px;max-height:120px" />` : ''}
+        <button class="btn secondary small" onclick="regPassbookPhoto()">📷 ${w.bank_passbook_data_url ? 'Retake' : 'Take photo'}</button>
+      </details>
+      ${regNav(3, null, 'renderRegStep(5)', !(w.aadhaar_verified && w.pan_verified))}
+    </div>`);
 }
 async function skipKycDev() {
   try {
     const result = await window.Api.skipKycDev();
     regState.worker = result.worker;
     toast('KYC skipped (dev mode)', 'success');
-    renderRegStep(3);
+    renderRegStep(4);
   } catch (e) { toast(e.message, 'error'); }
 }
 async function startDigilocker() {
@@ -634,10 +694,10 @@ async function startDigilocker() {
     regState.digilockerId = result.id;
     window.open(result.url, '_system');
     toast('Complete verification in the browser, then come back and tap "I\'ve completed verification"', 'info');
-    renderRegStep3ContinueButton();
+    renderDigilockerContinueButton();
   } catch (e) { toast(e.message, 'error'); }
 }
-function renderRegStep3ContinueButton() {
+function renderDigilockerContinueButton() {
   const container = document.querySelector('.content .card');
   if (!container) return;
   const btn = document.createElement('button');
@@ -652,7 +712,7 @@ async function checkDigilockerComplete() {
     const result = await window.Api.digilockerComplete(regState.digilockerId);
     regState.worker = result.worker;
     toast('Aadhaar verified', 'success');
-    renderRegStep(3);
+    renderRegStep(4);
   } catch (e) { toast(e.message, 'error'); }
 }
 // R04: PAN by photo — the server reads the number (OCR) and the worker only confirms it.
@@ -661,14 +721,14 @@ async function regPanPhoto() {
   if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
   toast('Reading PAN card…', 'info');
   try {
-    regState.panRead = await window.Api.panPhoto(photo.dataUrl);
+    regState.panRead = await window.Api.panPhoto(await shrinkDataUrl(photo.dataUrl, 1600, 0.85));
     regState.worker = await window.Api.getMe();
-    renderRegStep(3);
+    renderRegStep(4);
   } catch (e) {
     regState.panRead = null;
     if (e.data && e.data.manualEntry) regState.panManual = true;
     toast(e.message, 'error');
-    renderRegStep(3);
+    renderRegStep(4);
   }
 }
 async function verifyPan(fromPhoto) {
@@ -681,17 +741,113 @@ async function verifyPan(fromPhoto) {
     const result = await window.Api.panVerify(pan); // no pan = verify the number read from the photo
     regState.worker = result.worker;
     toast('PAN verified', 'success');
-    renderRegStep(3);
+    renderRegStep(4);
   } catch (e) { toast(e.message, 'error'); }
 }
+// Design rule 4: "bank passbook if needed" — optional.
+async function regPassbookPhoto() {
+  const photo = await window.TSGNative.takeDocumentPhoto();
+  if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
+  if (await regSave({ bankPassbookDataUrl: await shrinkDataUrl(photo.dataUrl, 1600, 0.85) })) renderRegStep(4);
+}
+
+// ---- 5 Job (screen 8: one choice from the admin's list) ----
+function regJob() {
+  renderShell(`
+    <div class="card">
+      ${regHeader(5, 'आपका काम', 'Your job')}
+      ${tiles(regState.opts.jobs, regState.worker.job_id, 'regPickJob')}
+      ${regNav(4, null, 'renderRegStep(6)', !regState.worker.job_id)}
+    </div>`);
+}
+async function regPickJob(id) { if (await regSave({ jobId: id })) renderRegStep(5); }
+
+// ---- 6 Vendor + site (screen 9: vendor from admin list; site set by GPS) ----
+async function regVendorSite() {
+  await withLoading(() => window.Api.listVendors(), (allVendors) => {
+    const w = regState.worker;
+    // R01: only vendors with a current contract (the server refuses others anyway).
+    const today = todayStr(Date.now());
+    const vendors = allVendors.filter(v => v.id === w.vendor_id || (v.status !== 'inactive' && !(v.contract_end && v.contract_end < today) && !(v.contract_start && v.contract_start > today)));
+    renderShell(`
+      <div class="card">
+        ${regHeader(6, 'वेंडर और साइट', 'Vendor and site')}
+        <label>${t('vendor')}</label>
+        ${vendors.length === 0 ? `<div class="gps-status bad">${t('noVendorsLocationsYet')}</div>` :
+          tiles(vendors.map(v => ({ id: v.id, en: v.name, icon: '🏢' })), w.vendor_id, 'regPickVendor')}
+        <label style="margin-top:14px">${bi('काम की जगह', 'Work site')}</label>
+        ${w.location_id ? `<div class="kyc-status ok">📍 ${esc(regState.siteName || (w.location && w.location.name) || 'Site set')}</div>` : ''}
+        ${isAssisted() ? `<p class="muted small">Site is the Site HR's location.</p>` :
+          `<button class="btn ${w.location_id ? 'secondary' : 'primary'} block" onclick="regSiteFromGps()">📍 ${w.location_id ? bi('फिर से जाँचें', 'Check again') : bi('मेरी साइट GPS से पता करें', 'Find my site by GPS')}</button>`}
+        ${regNav(5, null, 'renderRegStep(7)', !(w.vendor_id && w.location_id))}
+      </div>`);
+  });
+}
+async function regPickVendor(id) { if (await regSave({ vendorId: id })) renderRegStep(6); }
+async function regSiteFromGps() {
+  toast(t('gpsChecking'), 'info');
+  const pos = await window.TSGNative.getPosition();
+  if (!pos.ok) { toast(pos.error, 'error'); return; }
+  try {
+    const r = await window.Api.siteFromGps(pos.lat, pos.lng, pos.accuracy);
+    regState.worker = r.worker;
+    regState.siteName = r.location.name;
+    toast(`📍 ${r.location.name} (${r.location.distanceM} m)`, 'success');
+    renderRegStep(6);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- 7 Education + experience (screen 10: one choice each) ----
+function regEducation() {
+  const w = regState.worker;
+  renderShell(`
+    <div class="card">
+      ${regHeader(7, 'पढ़ाई और अनुभव', 'Education and experience')}
+      <label>${bi('पढ़ाई', 'Education')}</label>
+      ${tiles(regState.opts.education, w.qualification, 'regPickEducation')}
+      <label style="margin-top:14px">${bi('अनुभव', 'Experience')}</label>
+      ${tiles(regState.opts.experience, w.experience, 'regPickExperience')}
+      ${regNav(6, null, 'renderRegStep(8)', !w.qualification)}
+    </div>`);
+}
+async function regPickEducation(id) { if (await regSave({ qualification: id })) renderRegStep(7); }
+async function regPickExperience(id) { if (await regSave({ experience: id })) renderRegStep(7); }
+
+// ---- 8 Review and submit (screen 11) ----
+function regReview() {
+  // Reload so vendor/site names (joined by GET /me) are current.
+  withLoading(() => window.Api.getMe(), (fresh) => { regState.worker = fresh; regReviewRender(); });
+}
+function regReviewRender() {
+  const w = regState.worker, o = regState.opts;
+  const label = (list, id) => { const x = list.find(i => i.id === id); return x ? `${x.hi || x.name_hi || ''} / ${x.en || x.name}` : '—'; };
+  const row = (hi, en, val, step) => `<tr><td class="muted">${bi(hi, en)}</td><td>${val}</td><td><button class="link-btn small" onclick="renderRegStep(${step})">✏️</button></td></tr>`;
+  renderShell(`
+    <div class="card">
+      ${regHeader(8, 'जाँचें और भेजें', 'Check and submit')}
+      ${w.photo_data_url ? `<img src="${w.photo_data_url}" class="avatar" style="width:80px;height:80px;display:block;margin:0 auto 10px" />` : ''}
+      <table class="tbl">
+        ${row('नाम', 'Name', esc(w.name || '—'), 3)}
+        ${row('आधार', 'Aadhaar', `${esc(w.aadhaar_masked || '—')} ${w.aadhaar_verified ? '✅' : '⏳'}`, 3)}
+        ${row('पैन', 'PAN', `${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '—'} ${w.pan_verified ? '✅' : '⏳'}`, 4)}
+        ${row('काम', 'Job', esc(label(o.jobs, w.job_id)), 5)}
+        ${row('वेंडर / साइट', 'Vendor / site', `${esc((w.vendor && w.vendor.name) || '—')} / ${esc((w.location && w.location.name) || regState.siteName || '—')}`, 6)}
+        ${row('पढ़ाई', 'Education', esc(label(o.education, w.qualification)), 7)}
+        ${row('अनुभव', 'Experience', esc(label(o.experience, w.experience)), 7)}
+      </table>
+      ${regNav(7, bi('HR को भेजें', 'Submit to HR'), 'regSubmit()')}
+    </div>`);
+}
 async function regSubmit() {
-  if (!document.getElementById('f_consent').checked) { toast(t('consent'), 'error'); return; }
   try {
     await window.Api.submitMe();
     toast('Submitted for HR approval', 'success');
     if (isAssisted()) return endAssistedSession();
     location.hash = '#/w/pending'; render();
-  } catch (e) { toast(e.message, 'error'); }
+  } catch (e) {
+    toast(e.message, 'error');
+    if (e.data && e.data.consentVersion) renderRegStep(1);
+  }
 }
 
 // ---------------- Worker: pending / home / attendance / menu ----------------
@@ -986,6 +1142,7 @@ function renderWorkerMenu() {
             <button class="lang-btn on-light ${currentLang==='hi'?'active':''}" onclick="switchLang('hi')">HI</button>
           </div>
         </div>
+        <label class="consent-row" style="margin-top:14px"><input type="checkbox" ${voiceOn() ? 'checked' : ''} onchange="setVoice(this.checked)" /><span>🔊 ${bi('आवाज़ में पढ़कर सुनाएँ', 'Read screens aloud')}</span></label>
         <button class="btn secondary block" style="margin-top:14px" onclick="callSiteHr()">${t('callSiteHr')}</button>
         <button class="btn danger block" style="margin-top:8px" onclick="location.hash='#/w/logout-confirm';render()">${t('logout')}</button>
       </div>
@@ -1018,9 +1175,9 @@ function startHrLogin() {
     </div>
   `);
 }
-async function hrRequestOtp() {
-  const email = document.getElementById('hrEmail').value.trim();
-  const name = document.getElementById('hrName').value.trim();
+async function hrRequestOtp(resend) {
+  const email = resend ? loginState.email : document.getElementById('hrEmail').value.trim();
+  const name = resend ? loginState.name : document.getElementById('hrName').value.trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Enter a valid email', 'error'); return; }
   try {
     const result = await window.Api.hrOtpRequest(email);
@@ -1029,7 +1186,8 @@ async function hrRequestOtp() {
       <div class="card center-card">
         <h3>${t('enterOtp')}</h3>
         <p class="muted small">${result.devOtp ? `${t('otpHint')}: ${result.devOtp}` : `OTP sent to ${esc(email)}`}</p>
-        <input id="hrOtp" class="input" maxlength="6" inputmode="numeric" />
+        <input id="hrOtp" class="input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" />
+        ${resendOtpButton("hrRequestOtp(true)", result.resendInSeconds)}
         ${result.devOtp ? `
           <label>Role (dev server only — used if this email has no account yet)</label>
           <select id="hrDevRole" class="input">${Object.entries(ROLE_LABELS).map(([id, label]) => `<option value="${id}" ${id === 'central_hr' ? 'selected' : ''}>${label}</option>`).join('')}</select>
@@ -1138,6 +1296,7 @@ function renderHrApprovals() {
   withLoading(() => Promise.all([window.Api.listWorkers(), window.Api.listReportingManagers()]), ([all, managers]) => {
     window._knownManagers = managers;
     const pending = all.filter(w => w.status === 'pending' || w.status === 'sent_back');
+    window._approvalWorkers = pending;
     renderShell(`
       <div class="card">
         <h3>${t('pendingApprovals')}</h3>
@@ -1180,7 +1339,12 @@ function hrApprove(id) {
   form.id = 'mgrForm_' + id;
   form.className = 'worker-summary';
   form.style.width = '100%';
-  form.innerHTML = reportingManagerFields(id, {}) + `
+  const pw = (window._approvalWorkers || []).find(x => x.id === id) || {};
+  // BRD §12: approve only when the checks pass; a face check that isn't clean needs HR to
+  // compare the photos and say so (the server enforces this).
+  const faceNote = pw.face_check_status && pw.face_check_status !== 'clear'
+    ? `<label>Face check: ${esc(pw.face_check_note || 'not run')}</label><input id="faceNote_${id}" class="input" placeholder="I compared the registration photo with the documents — note" />` : '';
+  form.innerHTML = reportingManagerFields(id, {}) + faceNote + `
     <div class="wizard-actions">
       <button class="btn secondary small" onclick="document.getElementById('mgrForm_${id}').remove()">${t('cancel')}</button>
       <button class="btn primary small" onclick="hrConfirmApprove('${id}')">${t('approve')}</button>
@@ -1205,7 +1369,8 @@ function readManagerFields(id) {
   return { reportingManagerEmail: document.getElementById('mgrEmail_' + id).value.trim(), reportingManagerName: document.getElementById('mgrName_' + id).value.trim() };
 }
 async function hrConfirmApprove(id) {
-  try { await window.Api.approveWorker(id, readManagerFields(id)); toast('Approved', 'success'); renderHrApprovals(); }
+  const noteEl = document.getElementById('faceNote_' + id);
+  try { await window.Api.approveWorker(id, { ...readManagerFields(id), faceReviewNote: noteEl ? noteEl.value.trim() : undefined }); toast('Approved', 'success'); renderHrApprovals(); }
   catch (e) { toast(e.message, 'error'); }
 }
 async function hrSendBack(id) {
@@ -1543,8 +1708,8 @@ function renderHrMore() {
 function renderHrMasters() {
   const s = requireHr(); if (!s) return;
   withLoading(
-    () => Promise.all([window.Api.listVendors(), window.Api.listLocations()]),
-    ([vendors, locations]) => {
+    () => Promise.all([window.Api.listVendors(), window.Api.listLocations(), window.Api.listJobs()]),
+    ([vendors, locations, jobs]) => {
       window._hrVendors = vendors; window._hrLocations = locations;
       renderShell(`
         <div class="card">
@@ -1560,6 +1725,19 @@ function renderHrMasters() {
             </tr>`).join('')}</tbody>
           </table>
           ${editingVendor ? renderVendorForm() : `<button class="btn primary small" onclick="startEditVendor(null)">${t('addVendor')}</button>`}
+        </div>
+        <div class="card">
+          <h3>Jobs</h3>
+          <p class="muted small">The choices a worker sees at registration (BRD screen 8). Retired jobs stay on existing workers.</p>
+          <table class="tbl">${jobs.map(j => `<tr><td>${esc(j.icon || '')}</td><td>${esc(j.name)}<br/><span class="muted small">${esc(j.name_hi || '')}</span></td>
+            <td>${j.active ? '' : '<span class="badge badge-neutral">Retired</span>'}</td>
+            <td><button class="btn secondary small" onclick="toggleJob('${j.id}', ${j.active ? 0 : 1})">${j.active ? 'Retire' : 'Restore'}</button></td></tr>`).join('')}</table>
+          <details><summary class="link-btn">Add job</summary>
+            <label>Name (English)</label><input id="nj_name" class="input" />
+            <label>Name (Hindi)</label><input id="nj_hi" class="input" />
+            <label>Icon (emoji)</label><input id="nj_icon" class="input" maxlength="4" />
+            <button class="btn primary small" onclick="addJob()">${t('save')}</button>
+          </details>
         </div>
         <div class="card">
           <h3>Locations</h3>
@@ -1681,6 +1859,17 @@ async function fixLocationToMyGps(id) {
     renderHrMasters();
   } catch (e) { toast(e.message, 'error'); }
 }
+// ---- Jobs master (BRD §10 screen 8) ----
+async function addJob() {
+  const name = fieldVal('nj_name').trim();
+  if (!name) { toast('Name required', 'error'); return; }
+  try { await window.Api.createJob({ name, nameHi: fieldVal('nj_hi').trim(), icon: fieldVal('nj_icon').trim() }); toast('Job added', 'success'); renderHrMasters(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+async function toggleJob(id, active) {
+  try { await window.Api.updateJob(id, { active: !!active }); renderHrMasters(); } catch (e) { toast(e.message, 'error'); }
+}
+
 // ---- Vendors (R01: name, GSTIN, contact, contract dates) ----
 function contractCell(v) {
   if (!v.contract_start && !v.contract_end) return '<span class="muted small">not set</span>';
