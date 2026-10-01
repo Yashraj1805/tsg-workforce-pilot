@@ -330,6 +330,7 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/workers', icon: 'user', label: () => 'Workers', perms: ['workers.read'] },
   { hash: '#/hr/billing', icon: 'ledger', label: () => 'Vendor bill check', perms: ['billing.read'] },
   { hash: '#/hr/reports', icon: 'doc', label: () => 'Reports (Excel)', perms: ['reports.read'] },
+  { hash: '#/hr/emails', icon: 'inbox', label: () => 'Automatic emails', perms: ['emails.manage'] },
   { hash: '#/hr/timeguard', icon: 'shield', label: () => t('timeGuard'), perms: ['workers.read', 'punches.read'] },
   { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
@@ -2378,6 +2379,56 @@ async function billDownload(month) {
   catch (e) { toast(e.message, 'error'); }
 }
 
+// ---------------- R15: automatic emails (Central HR sets them once) ----------------
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function renderHrEmails() {
+  const s = requireHr(); if (!s) return;
+  withLoading(() => window.Api.emailReports(), (data) => {
+    window._emailReports = data.reports;
+    renderShell(`
+      <div class="card">
+        <h3>Automatic emails</h3>
+        <p class="muted small">Each email includes an Excel file. Times are IST.</p>
+        ${!data.delivery.email ? `<div class="gps-status warn">Email sending isn't set up yet (no SMTP in the server's .env) — reports are built and logged but not delivered.</div>` : ''}
+        ${!data.delivery.whatsapp ? `<p class="muted small">WhatsApp copy of the manager's email: not set up (WATI).</p>` : ''}
+      </div>
+      ${data.reports.map(r => `
+        <div class="card">
+          <h3>${esc(r.title)} ${r.enabled ? '<span class="badge badge-ok">On</span>' : '<span class="badge badge-neutral">Off</span>'}</h3>
+          <p class="muted small">${esc(r.shows)} · To: ${esc(r.to)}</p>
+          <div class="filter-row">
+            <div><label>Time</label><input id="et_${r.key}" type="time" class="input" value="${r.time}" /></div>
+            ${r.schedule === 'weekly' ? `<div><label>Day</label><select id="ew_${r.key}" class="input">${WEEKDAYS.map((d, i) => `<option value="${i}" ${r.weekday === i ? 'selected' : ''}>${d}</option>`).join('')}</select></div>`
+              : `<div><label>When</label><div class="input" style="background:none;border:none">${r.schedule === 'monthly' ? '1st of the month' : 'Every day'}</div></div>`}
+          </div>
+          <label>Extra receivers (comma-separated emails)</label>
+          <input id="ex_${r.key}" class="input" value="${esc(r.extraRecipients.join(', '))}" />
+          <label class="consent-row"><input type="checkbox" id="en_${r.key}" ${r.enabled ? 'checked' : ''} /><span>Send automatically</span></label>
+          <div class="wizard-actions">
+            <button class="btn secondary small" onclick="sendEmailNow('${r.key}')">Send now</button>
+            <button class="btn primary small" onclick="saveEmailSetting('${r.key}')">${t('save')}</button>
+          </div>
+        </div>`).join('')}
+      <div class="card">
+        <h3>Recent sends</h3>
+        ${data.runs.length === 0 ? `<p class="muted small">Nothing sent yet.</p>` : `<table class="tbl"><tbody>${data.runs.slice(0, 15).map(x => `<tr><td class="small">${new Date(x.ran_at).toLocaleString()}</td><td>${esc((data.reports.find(r => r.key === x.report) || {}).title || x.report)}</td><td class="small">${esc(x.trigger)}</td><td class="small">${esc(x.note || '')}</td></tr>`).join('')}</tbody></table>`}
+      </div>`);
+  });
+}
+async function saveEmailSetting(key) {
+  const wd = document.getElementById('ew_' + key);
+  const body = {
+    time: fieldVal('et_' + key), enabled: document.getElementById('en_' + key).checked,
+    extraRecipients: fieldVal('ex_' + key).split(',').map(x => x.trim()).filter(Boolean),
+    ...(wd ? { weekday: Number(wd.value) } : {}),
+  };
+  try { await window.Api.updateEmailReport(key, body); toast('Saved', 'success'); renderHrEmails(); } catch (e) { toast(e.message, 'error'); }
+}
+async function sendEmailNow(key) {
+  try { const r = await window.Api.sendEmailReportNow(key); toast(r.note, r.sent === r.messages ? 'success' : 'info'); renderHrEmails(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
 // ---------------- System Admin: admin-portal users ----------------
 // Create users with a role and, for location/vendor-scoped roles, the site or vendor
 // they can see. Which roles need which scope comes from the server (/admin-users/roles).
@@ -2558,6 +2609,7 @@ function render() {
     '#/hr/workers': renderHrWorkers,
     '#/hr/billing': renderHrBilling,
     '#/hr/reports': renderHrReports,
+    '#/hr/emails': renderHrEmails,
     '#/hr/assist': renderHrAssist,
     '#/hr/gate': renderHrGate,
     '#/hr/logout-confirm': renderHrLogoutConfirm,

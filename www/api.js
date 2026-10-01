@@ -159,6 +159,10 @@ const Api = {
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   },
 
+  emailReports: () => apiFetch('/api/email-reports'),
+  updateEmailReport: (key, body) => apiFetch('/api/email-reports/' + key, { method: 'PUT', body }),
+  sendEmailReportNow: (key) => apiFetch('/api/email-reports/' + key + '/send-now', { method: 'POST' }),
+
   // ---- Admin users (System Admin) ----
   listAdminRoles: () => apiFetch('/api/admin-users/roles'),
   listAdminUsers: () => apiFetch('/api/admin-users'),
