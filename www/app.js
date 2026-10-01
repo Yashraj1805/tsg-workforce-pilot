@@ -257,6 +257,7 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/masters', icon: 'building', label: () => t('hrMasters'), perms: ['masters.write'], nav: true },
   { hash: '#/hr/users', icon: 'user', label: () => 'Users', perms: ['users.manage'], nav: true },
   { hash: '#/hr/audit', icon: 'ledger', label: () => t('hrAudit'), perms: ['audit.read'], nav: true },
+  { hash: '#/hr/workers', icon: 'user', label: () => 'Workers', perms: ['workers.read'] },
   { hash: '#/hr/timeguard', icon: 'shield', label: () => t('timeGuard'), perms: ['workers.read', 'punches.read'] },
   { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
@@ -1211,6 +1212,90 @@ function renderHrAttendance() {
     }
   );
 }
+// ---- R14: transfer / exit / blacklist, and R03 phone change ----
+// Every action needs a reason; the server records it in the worker's history.
+function renderManageWorkerCard(w, locations, vendors) {
+  if (w.status === 'exited') {
+    return `<div class="card"><h3>Manage worker</h3><p class="muted">Exited on ${esc(w.exit_date || '?')} — ${esc(w.exit_reason || '')}${w.blacklisted ? ' · <b>Blacklisted</b>' : ''}</p></div>`;
+  }
+  const approved = w.status === 'approved';
+  return `
+    <div class="card">
+      <h3>Manage worker</h3>
+      ${approved ? `
+      <details><summary class="link-btn">Transfer to another location / vendor</summary>
+        <label>${t('location')}</label>
+        <select id="tr_location" class="input">${locations.map(l => `<option value="${l.id}" ${l.id === w.location_id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+        <label>${t('vendor')}</label>
+        <select id="tr_vendor" class="input">${vendors.map(v => `<option value="${v.id}" ${v.id === w.vendor_id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>
+        <label>${t('reason')}</label><input id="tr_reason" class="input" />
+        <button class="btn primary small" onclick="hrTransfer('${w.id}')">Transfer</button>
+      </details>` : ''}
+      ${w.device_id ? `
+      <details><summary class="link-btn">Approve phone change</summary>
+        <p class="muted small">Clears the registered phone. The worker's next punch registers their new phone.</p>
+        <label>${t('reason')}</label><input id="dev_reason" class="input" placeholder="e.g. phone lost, new phone" />
+        <button class="btn warn small" onclick="hrResetDevice('${w.id}')">Clear registered phone</button>
+      </details>` : ''}
+      <details><summary class="link-btn" style="color:var(--bad, #b91c1c)">Exit worker</summary>
+        <label>Exit date</label><input id="ex_date" type="date" class="input" value="${todayStr(Date.now())}" />
+        <label>${t('reason')}</label><input id="ex_reason" class="input" />
+        <label class="consent-row"><input type="checkbox" id="ex_blacklist" /><span>Blacklist (misconduct) — this Aadhaar, PAN and face can never register again, through any vendor</span></label>
+        <button class="btn danger small" onclick="hrExit('${w.id}')">Exit worker</button>
+      </details>
+    </div>`;
+}
+const fieldVal = id => (document.getElementById(id) || {}).value || '';
+async function hrTransfer(id) {
+  try {
+    await window.Api.transferWorker(id, { locationId: fieldVal('tr_location'), vendorId: fieldVal('tr_vendor'), reason: fieldVal('tr_reason').trim() });
+    toast('Transferred', 'success'); renderHrWorkerDetail();
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function hrResetDevice(id) {
+  try { await window.Api.resetWorkerDevice(id, fieldVal('dev_reason').trim()); toast('Phone cleared', 'success'); renderHrWorkerDetail(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+async function hrExit(id) {
+  const blacklist = document.getElementById('ex_blacklist').checked;
+  if (!confirm(blacklist ? 'Exit AND blacklist this worker? They can never register again.' : 'Exit this worker? They will not be able to punch.')) return;
+  try {
+    await window.Api.exitWorker(id, { exitDate: fieldVal('ex_date'), reason: fieldVal('ex_reason').trim(), blacklist });
+    toast('Worker exited', 'success'); renderHrWorkerDetail();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ---- Workers directory: every worker in the caller's scope, searchable, any status ----
+function renderHrWorkers() {
+  const s = requireHr(); if (!s) return;
+  withLoading(() => window.Api.listWorkers(), (all) => {
+    window._allWorkers = all;
+    renderShell(`
+      <div class="card">
+        <h3>Workers</h3>
+        <input id="wk_search" class="input" placeholder="Search name or mobile" oninput="filterWorkerList()" />
+        <select id="wk_status" class="input" onchange="filterWorkerList()">
+          ${['', 'approved', 'pending', 'sent_back', 'draft', 'exited', 'rejected'].map(st => `<option value="${st}">${st ? st.replace('_', ' ') : 'All statuses'}</option>`).join('')}
+        </select>
+        <div id="wk_list"></div>
+      </div>`);
+    filterWorkerList();
+  });
+}
+function filterWorkerList() {
+  const q = fieldVal('wk_search').trim().toLowerCase();
+  const st = fieldVal('wk_status');
+  const rows = (window._allWorkers || []).filter(w => (!st || w.status === st) && (!q || (w.name || '').toLowerCase().includes(q) || (w.mobile || '').includes(q)));
+  document.getElementById('wk_list').innerHTML = rows.length === 0 ? emptyState(t('noData'), 'user') : rows.map(w => `
+    <div class="approval-row">
+      <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${w.photo_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
+      <div class="approval-info">
+        <b><a href="javascript:void(0)" onclick="viewWorker('${w.id}')" style="color:inherit">${esc(w.name || w.mobile)}</a></b> ${statusBadge(w.status)} ${w.blacklisted ? '<span class="badge badge-bad">Blacklisted</span>' : ''}<br/>
+        <span class="muted small">${esc(w.mobile)} · ${esc(w.designation || '')}</span>
+      </div>
+    </div>`).join('');
+}
+
 async function hrSaveManager(id) {
   try { await window.Api.setReportingManager(id, readManagerFields(id)); toast('Reporting manager updated', 'success'); renderHrWorkerDetail(); }
   catch (e) { toast(e.message, 'error'); }
@@ -1224,10 +1309,13 @@ function viewWorker(id) {
 function renderHrWorkerDetail() {
   const s = requireHr(); if (!s) return;
   const id = window._viewWorkerId;
-  if (!id) { location.hash = '#/hr/approvals'; render(); return; }
+  if (!id) { location.hash = '#/hr/workers'; render(); return; }
   withLoading(
-    () => Promise.all([window.Api.getWorkerById(id), window.Api.listPunches({ workerId: id })]),
-    ([w, punches]) => {
+    () => Promise.all([
+      window.Api.getWorkerById(id), window.Api.listPunches({ workerId: id }), window.Api.workerHistory(id),
+      hasPerm('workers.manage') ? Promise.all([window.Api.listLocations(), window.Api.listVendors()]) : Promise.resolve([[], []]),
+    ]),
+    ([w, punches, history, [locations, vendors]]) => {
       const sorted = [...punches].sort((a, b) => b.ts - a.ts).slice(0, 20);
       renderShell(`
         <div class="card">
@@ -1251,6 +1339,15 @@ function renderHrWorkerDetail() {
               ${reportingManagerFields(w.id, { name: w.reporting_manager_name, email: w.reporting_manager_email })}
               <button class="btn primary small" onclick="hrSaveManager('${w.id}')">${t('save')}</button>
             </details>` : ''}
+        </div>
+        ${hasPerm('workers.manage') ? renderManageWorkerCard(w, locations, vendors) : ''}
+        <div class="card">
+          <h3>History</h3>
+          ${history.length === 0 ? `<p class="muted small">No transfers, exits or other changes yet.</p>` : `
+          <table class="tbl">
+            <thead><tr><th>${t('date')}</th><th>Change</th><th>${t('reason')}</th><th>By</th></tr></thead>
+            <tbody>${history.map(e => `<tr><td class="small">${new Date(e.ts).toLocaleString()}</td><td>${esc(e.detail)}</td><td>${esc(e.reason || '')}</td><td class="small">${esc(e.by_user || '')}</td></tr>`).join('')}</tbody>
+          </table>`}
         </div>
         <div class="card">
           <h3>${t('comparePhotos')}</h3>
@@ -1793,6 +1890,7 @@ function render() {
     '#/hr/account': renderHrAccount,
     '#/hr/worker': renderHrWorkerDetail,
     '#/hr/users': renderHrUsers,
+    '#/hr/workers': renderHrWorkers,
     '#/hr/logout-confirm': renderHrLogoutConfirm,
   };
   const fn = routes[hash];
