@@ -332,6 +332,7 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/reports', icon: 'doc', label: () => 'Reports (Excel)', perms: ['reports.read'] },
   { hash: '#/hr/emails', icon: 'inbox', label: () => 'Automatic emails', perms: ['emails.manage'] },
   { hash: '#/hr/kiosks', icon: 'camera', label: () => 'Gate tablets', perms: ['kiosks.manage'] },
+  { hash: '#/hr/requests', icon: 'doc', label: () => 'Transfer & exit requests', perms: ['requests.view'] },
   { hash: '#/hr/timeguard', icon: 'shield', label: () => t('timeGuard'), perms: ['workers.read', 'punches.read'] },
   { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
@@ -1642,6 +1643,65 @@ function renderHrAttendance() {
     }
   );
 }
+// ---- Transfer / exit requests (proposal process 3) ----
+// Managers / Site HR ask; the new site's Site HR accepts a transfer; Central HR completes.
+function renderRequestCard(w, locations, vendors) {
+  if (!hasPerm('requests.raise') || hasPerm('workers.manage') || w.status !== 'approved') return '';
+  return `<div class="card">
+    <h3>Request a change</h3>
+    <p class="muted small">Central HR carries it out. A move to another site is first accepted by that site's HR.</p>
+    <details><summary class="link-btn">Request transfer</summary>
+      <label>${t('location')}</label><select id="rq_loc" class="input"><option value="">(same)</option>${locations.filter(l => l.id !== w.location_id).map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select>
+      <label>${t('vendor')}</label><select id="rq_ven" class="input"><option value="">(same)</option>${vendors.filter(v => v.id !== w.vendor_id).map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select>
+      <label>${t('reason')}</label><input id="rq_treason" class="input" />
+      <button class="btn primary small" onclick="raiseRequest('${w.id}', 'transfer')">Send request</button>
+    </details>
+    <details><summary class="link-btn" style="color:var(--bad, #b91c1c)">Report exit (same day)</summary>
+      <label>Last working day</label><input id="rq_date" type="date" class="input" value="${todayStr(Date.now())}" />
+      <label>${t('reason')}</label><input id="rq_ereason" class="input" />
+      <label class="consent-row"><input type="checkbox" id="rq_bl" /><span>Misconduct — suggest blacklisting</span></label>
+      <button class="btn danger small" onclick="raiseRequest('${w.id}', 'exit')">Inform Central HR</button>
+    </details>
+  </div>`;
+}
+async function raiseRequest(workerId, type) {
+  const body = type === 'transfer'
+    ? { workerId, type, toLocationId: fieldVal('rq_loc') || undefined, toVendorId: fieldVal('rq_ven') || undefined, reason: fieldVal('rq_treason').trim() }
+    : { workerId, type, exitDate: fieldVal('rq_date'), reason: fieldVal('rq_ereason').trim(), blacklist: document.getElementById('rq_bl').checked };
+  try { await window.Api.raiseWorkerRequest(body); toast(type === 'exit' ? 'Central HR informed' : 'Transfer requested', 'success'); renderHrWorkerDetail(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+function renderHrRequests() {
+  const s = requireHr(); if (!s) return;
+  withLoading(() => window.Api.listWorkerRequests(), (list) => {
+    const me = getSession();
+    const canComplete = hasPerm('workers.manage');
+    const label = { pending: ['badge-warn', 'Waiting for new site'], accepted: ['badge-warn', 'Waiting for Central HR'], done: ['badge-ok', 'Done'], rejected: ['badge-neutral', 'Rejected'] };
+    renderShell(`
+      <div class="card">
+        <h3>Transfer & exit requests</h3>
+        ${list.length === 0 ? emptyState(t('noData'), 'doc') : list.map(r => `
+          <div class="worker-summary">
+            <b>${esc(r.worker_name)}</b> — ${r.type === 'transfer' ? `transfer ${esc(r.from_location || '')} → ${esc(r.to_location || r.from_location || '')}${r.to_vendor ? ` (vendor ${esc(r.to_vendor)})` : ''}` : `exit${r.exit_date ? ' on ' + esc(r.exit_date) : ''}${r.blacklist_suggested ? ' · blacklist suggested' : ''}`}
+            <span class="badge ${label[r.status][0]}">${label[r.status][1]}</span>
+            <div class="small muted">${esc(r.reason)} · by ${esc(r.raised_by)} · ${new Date(r.raised_at).toLocaleDateString()}${r.decision_note ? ` · ${esc(r.decision_note)}` : ''}</div>
+            <div style="margin-top:6px">
+              ${r.status === 'pending' && r.type === 'transfer' && (me.role === 'site_hr' || canComplete) ? `<button class="btn primary small" onclick="requestAction('${r.id}', 'accept')">Accept at new site</button>` : ''}
+              ${canComplete && (r.status === 'accepted' || (r.type === 'exit' && r.status === 'pending')) ? `<button class="btn primary small" onclick="requestAction('${r.id}', 'complete')">${r.type === 'exit' ? 'Deactivate worker' : 'Update location'}</button>` : ''}
+              ${(r.status === 'pending' || r.status === 'accepted') && (canComplete || me.role === 'site_hr') ? `<button class="btn secondary small" onclick="requestAction('${r.id}', 'reject')">Reject</button>` : ''}
+            </div>
+          </div>`).join('')}
+      </div>`);
+  });
+}
+async function requestAction(id, action) {
+  let reason;
+  if (action === 'reject') { reason = prompt('Reason for rejecting?'); if (!reason) return; }
+  if (action === 'complete' && !confirm('Carry out this request now?')) return;
+  try { await window.Api.workerRequestAction(id, action, reason ? { reason } : undefined); toast('Done', 'success'); renderHrRequests(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
 // ---- Worker history (BRD §13: "Day-wise in and out time. Selfie and map open on tap.") ----
 function renderDayHistory(w, punches) {
   const days = {};
@@ -1787,7 +1847,7 @@ function renderHrWorkerDetail() {
   withLoading(
     () => Promise.all([
       window.Api.getWorkerById(id), window.Api.listPunches({ workerId: id }), window.Api.workerHistory(id),
-      hasPerm('workers.manage') ? Promise.all([window.Api.listLocations(), window.Api.listVendors()]) : Promise.resolve([[], []]),
+      (hasPerm('workers.manage') || hasPerm('requests.raise')) ? Promise.all([window.Api.listLocations(), window.Api.listVendors()]) : Promise.resolve([[], []]),
     ]),
     ([w, punches, history, [locations, vendors]]) => {
       window._histWorker = w; window._histPunches = punches;
@@ -1816,6 +1876,7 @@ function renderHrWorkerDetail() {
             </details>` : ''}
         </div>
         ${hasPerm('workers.manage') ? renderManageWorkerCard(w, locations, vendors) : ''}
+        ${renderRequestCard(w, locations, vendors)}
         <div class="card">
           <h3>History</h3>
           ${history.length === 0 ? `<p class="muted small">No transfers, exits or other changes yet.</p>` : `
@@ -2747,6 +2808,7 @@ function render() {
     '#/hr/reports': renderHrReports,
     '#/hr/emails': renderHrEmails,
     '#/hr/kiosks': renderHrKiosks,
+    '#/hr/requests': renderHrRequests,
     '#/kiosk': renderKiosk,
     '#/hr/assist': renderHrAssist,
     '#/hr/gate': renderHrGate,

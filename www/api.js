@@ -166,6 +166,9 @@ const Api = {
 
   listBackups: () => apiFetch('/api/system/backups'),
   backupNow: () => apiFetch('/api/system/backups', { method: 'POST' }),
+  listWorkerRequests: () => apiFetch('/api/worker-requests'),
+  raiseWorkerRequest: (b) => apiFetch('/api/worker-requests', { method: 'POST', body: b }),
+  workerRequestAction: (id, action, body) => apiFetch(`/api/worker-requests/${id}/${action}`, { method: 'POST', body }),
   // ---- Gate tablet (R20) ----
   listKiosks: () => apiFetch('/api/kiosks'),
   createKiosk: (k) => apiFetch('/api/kiosks', { method: 'POST', body: k }),
