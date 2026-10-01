@@ -282,6 +282,8 @@ function hasPerm(p) { const s = getSession(); return !!(s && s.permissions && s.
 // first three a role can open (among `nav: true`) become its bottom-nav tabs, the rest
 // go under "More".
 const ADMIN_SCREENS = [
+  // Security's first tab: "Security at the gate checks the portal" (proposal).
+  { hash: '#/hr/gate', icon: 'shield', label: () => 'Gate check', perms: ['workers.gatecheck'], nav: true, onlyWithout: 'workers.read' },
   { hash: '#/hr/dashboard', icon: 'chart', label: () => t('hrDashboard'), perms: ['workers.read', 'punches.read'], nav: true },
   { hash: '#/hr/approvals', icon: 'check', label: () => t('hrApprovals'), perms: ['workers.approve'], nav: true },
   { hash: '#/hr/assist', icon: 'user', label: () => 'Register worker', perms: ['workers.register_assisted'], nav: true },
@@ -302,7 +304,9 @@ function canOpenAdminRoute(hash) {
   const perms = screen ? screen.perms : ADMIN_ROUTE_PERMS[hash];
   return !!perms && perms.every(hasPerm);
 }
-function adminNavScreens() { return ADMIN_SCREENS.filter(x => x.nav && x.perms.every(hasPerm)).slice(0, 3); }
+// onlyWithout: a tab only for roles lacking that permission (e.g. Gate check is Security's
+// main tab; HR roles, who can see workers, find it under More).
+function adminNavScreens() { return ADMIN_SCREENS.filter(x => x.nav && (!x.onlyWithout || !hasPerm(x.onlyWithout)) && x.perms.every(hasPerm)).slice(0, 3); }
 function adminMoreScreens() {
   const inNav = adminNavScreens().map(x => x.hash);
   return ADMIN_SCREENS.filter(x => !inNav.includes(x.hash) && x.perms.every(hasPerm));
@@ -1754,6 +1758,41 @@ async function addLocation() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// ---------------- Gate check (proposal: "No HR approval, no entry") ----------------
+// Security looks a person up at the gate: big green ALLOWED / red NOT ALLOWED with the
+// registered photo to compare against the face in front of them.
+function renderHrGate() {
+  const s = requireHr(); if (!s) return;
+  renderShell(`
+    <div class="card">
+      <h3>Gate check</h3>
+      <p class="muted small">No HR approval, no entry. Search by mobile number or name, then compare the photo with the person.</p>
+      <input id="gate_q" class="input" placeholder="Mobile or name" onkeydown="if(event.key==='Enter')gateSearch()" />
+      <button class="btn primary block" onclick="gateSearch()">Check</button>
+      <div id="gate_results"></div>
+    </div>`);
+}
+async function gateSearch() {
+  const el = document.getElementById('gate_results');
+  el.innerHTML = spinnerRow('Checking…');
+  try {
+    const rows = await window.Api.gateCheck(fieldVal('gate_q').trim());
+    el.innerHTML = rows.length === 0 ? `<div class="gps-status bad" style="font-size:18px">❌ Not registered — no entry</div>` : rows.map(r => `
+      <div class="worker-summary" style="border-left:6px solid ${r.entryAllowed ? 'var(--ok, #16a34a)' : 'var(--bad, #b91c1c)'}">
+        <div class="profile-header">
+          ${r.photo ? `<img src="${r.photo}" class="avatar" style="width:72px;height:72px" />` : `<div class="avatar">?</div>`}
+          <div class="profile-text">
+            <h3>${esc(r.name || '—')}</h3>
+            <div class="muted small">…${esc(r.mobileLast4)} · ${esc(r.vendor || '')} · ${esc(r.location || '')} · ${esc(r.designation || '')}</div>
+          </div>
+        </div>
+        <div style="font-size:20px;font-weight:700;margin-top:8px;color:${r.entryAllowed ? 'var(--ok, #16a34a)' : 'var(--bad, #b91c1c)'}">
+          ${r.entryAllowed ? '✅ ENTRY ALLOWED' : `❌ NO ENTRY — ${r.blacklisted ? 'blacklisted' : r.status === 'exited' ? 'exited' : 'not approved by HR'}`}
+        </div>
+      </div>`).join('');
+  } catch (e) { el.innerHTML = ''; toast(e.message, 'error'); }
+}
+
 // ---------------- Site HR: register a worker on HR's phone (BRD design rule 8) ----------------
 // The worker's own OTP (sent to their mobile) unlocks a short-lived "assisted" worker
 // session; this phone then runs the normal registration wizard for them. HR's own
@@ -2061,6 +2100,7 @@ function render() {
     '#/hr/workers': renderHrWorkers,
     '#/hr/billing': renderHrBilling,
     '#/hr/assist': renderHrAssist,
+    '#/hr/gate': renderHrGate,
     '#/hr/logout-confirm': renderHrLogoutConfirm,
   };
   const fn = routes[hash];

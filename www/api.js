@@ -92,6 +92,7 @@ const Api = {
   exitWorker: (id, body) => apiFetch(`/api/workers/${id}/exit`, { method: 'POST', body }),
   resetWorkerDevice: (id, reason) => apiFetch(`/api/workers/${id}/reset-device`, { method: 'POST', body: { reason } }),
   workerHistory: (id) => apiFetch(`/api/workers/${id}/history`),
+  gateCheck: (q) => apiFetch('/api/workers/gate-check?q=' + encodeURIComponent(q)),
   setReportingManager:(id, manager) => apiFetch(`/api/workers/${id}/reporting-manager`, { method: 'PUT', body: manager }),
   listReportingManagers: () => apiFetch('/api/workers/meta/reporting-managers'),
   sendBackWorker: (id, reason) => apiFetch(`/api/workers/${id}/send-back`, { method: 'POST', body: { reason } }),
