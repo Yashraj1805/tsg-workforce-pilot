@@ -109,6 +109,7 @@ const Api = {
   // ---- Masters ----
   listVendors: () => apiFetch('/api/vendors'),
   createVendor: (v) => apiFetch('/api/vendors', { method: 'POST', body: v }),
+  updateVendor: (id, v) => apiFetch(`/api/vendors/${id}`, { method: 'PUT', body: v }),
   listLocations: () => apiFetch('/api/locations'),
   createLocation: (l) => apiFetch('/api/locations', { method: 'POST', body: l }),
   updateLocation: (id, l) => apiFetch(`/api/locations/${id}`, { method: 'PUT', body: l }),

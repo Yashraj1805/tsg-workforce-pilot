@@ -483,8 +483,11 @@ async function regStep1Next() {
 async function renderRegStep2() {
   await withLoading(
     () => Promise.all([window.Api.listVendors(), window.Api.listLocations()]),
-    ([vendors, locations]) => {
+    ([allVendors, locations]) => {
       const w = regState.worker;
+      // R01: only vendors with a current contract (the server refuses others anyway).
+      const today = todayStr(Date.now());
+      const vendors = allVendors.filter(v => v.id === w.vendor_id || (v.status !== 'inactive' && !(v.contract_end && v.contract_end < today) && !(v.contract_start && v.contract_start > today)));
       const blocked = vendors.length === 0 || locations.length === 0;
       renderShell(`
         <div class="card">
@@ -1408,16 +1411,16 @@ function renderHrMasters() {
         <div class="card">
           <h3>Vendors</h3>
           <table class="tbl">
-            <thead><tr><th>${t('name')}</th><th>GSTIN</th><th>PAN</th><th>Contact</th></tr></thead>
-            <tbody>${vendors.map(v => `<tr><td>${esc(v.name)}</td><td>${esc(v.gstin||'')}</td><td>${esc(v.pan||'')}</td><td>${esc(v.contact_person||'')}</td></tr>`).join('')}</tbody>
+            <thead><tr><th>${t('name')}</th><th>GSTIN</th><th>Contact</th><th>Contract</th><th></th></tr></thead>
+            <tbody>${vendors.map(v => `<tr>
+              <td>${esc(v.name)}${v.status === 'inactive' ? ' <span class="badge badge-neutral">Inactive</span>' : ''}</td>
+              <td>${esc(v.gstin||'')}</td>
+              <td>${esc(v.contact_person||'')}${v.phone ? `<br/><span class="muted small">${esc(v.phone)}</span>` : ''}</td>
+              <td>${contractCell(v)}</td>
+              <td><button class="btn secondary small" onclick="startEditVendor('${v.id}')">Edit</button></td>
+            </tr>`).join('')}</tbody>
           </table>
-          <details><summary class="link-btn">${t('addVendor')}</summary>
-            <label>${t('name')}</label><input id="nv_name" class="input" />
-            <label>GSTIN</label><input id="nv_gstin" class="input" />
-            <label>PAN</label><input id="nv_pan" class="input" />
-            <label>Contact person / phone</label><input id="nv_contact" class="input" />
-            <button class="btn primary" onclick="addVendor()">${t('save')}</button>
-          </details>
+          ${editingVendor ? renderVendorForm() : `<button class="btn primary small" onclick="startEditVendor(null)">${t('addVendor')}</button>`}
         </div>
         <div class="card">
           <h3>Locations</h3>
@@ -1539,15 +1542,57 @@ async function fixLocationToMyGps(id) {
     renderHrMasters();
   } catch (e) { toast(e.message, 'error'); }
 }
-async function addVendor() {
-  const name = document.getElementById('nv_name').value.trim();
-  if (!name) { toast('Name required', 'error'); return; }
+// ---- Vendors (R01: name, GSTIN, contact, contract dates) ----
+function contractCell(v) {
+  if (!v.contract_start && !v.contract_end) return '<span class="muted small">not set</span>';
+  const today = todayStr(Date.now());
+  const soon = todayStr(Date.now() + 30 * 86400000);
+  let badge = '';
+  if (v.contract_end && v.contract_end < today) badge = '<span class="badge badge-bad">Expired</span>';
+  else if (v.contract_start && v.contract_start > today) badge = '<span class="badge badge-neutral">Not started</span>';
+  else if (v.contract_end && v.contract_end <= soon) badge = '<span class="badge badge-warn">Ends soon</span>';
+  return `<span class="small">${esc(v.contract_start || '?')} → ${esc(v.contract_end || '?')}</span> ${badge}`;
+}
+let editingVendor = null; // null = closed; {} = new; {...row} = editing
+function startEditVendor(id) {
+  editingVendor = id ? { ...(window._hrVendors || []).find(v => v.id === id) } : {};
+  renderHrMasters();
+}
+function renderVendorForm() {
+  const v = editingVendor;
+  return `
+    <div class="worker-summary">
+      <h3>${v.id ? 'Edit: ' + esc(v.name) : t('addVendor')}</h3>
+      <label>${t('name')}</label><input id="nv_name" class="input" value="${esc(v.name || '')}" />
+      <label>GSTIN</label><input id="nv_gstin" class="input" maxlength="15" style="text-transform:uppercase" value="${esc(v.gstin || '')}" />
+      <label>PAN</label><input id="nv_pan" class="input" maxlength="10" style="text-transform:uppercase" value="${esc(v.pan || '')}" />
+      <label>Contact person</label><input id="nv_contact" class="input" value="${esc(v.contact_person || '')}" />
+      <label>Contact phone</label><input id="nv_phone" class="input" maxlength="10" inputmode="numeric" value="${esc(v.phone || '')}" />
+      <label>Contract start</label><input id="nv_cstart" type="date" class="input" value="${esc(v.contract_start || '')}" />
+      <label>Contract end</label><input id="nv_cend" type="date" class="input" value="${esc(v.contract_end || '')}" />
+      ${v.id ? `<label>${t('status')}</label><select id="nv_status" class="input">
+        <option value="active" ${v.status !== 'inactive' ? 'selected' : ''}>Active</option>
+        <option value="inactive" ${v.status === 'inactive' ? 'selected' : ''}>Inactive (no new registrations)</option></select>` : ''}
+      <div class="wizard-actions">
+        <button class="btn secondary" onclick="startEditVendorCancel()">${t('cancel')}</button>
+        <button class="btn primary" onclick="saveVendor()">${t('save')}</button>
+      </div>
+    </div>`;
+}
+function startEditVendorCancel() { editingVendor = null; renderHrMasters(); }
+async function saveVendor() {
+  const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
+  const body = {
+    name: val('nv_name'), gstin: val('nv_gstin'), pan: val('nv_pan'), contactPerson: val('nv_contact'), phone: val('nv_phone'),
+    contractStart: val('nv_cstart'), contractEnd: val('nv_cend'), status: val('nv_status'),
+  };
+  if (!body.name) { toast('Name required', 'error'); return; }
   try {
-    await window.Api.createVendor({
-      name, gstin: document.getElementById('nv_gstin').value.trim(), pan: document.getElementById('nv_pan').value.trim(),
-      contactPerson: document.getElementById('nv_contact').value.trim(),
-    });
-    toast('Vendor added', 'success'); renderHrMasters();
+    if (editingVendor.id) await window.Api.updateVendor(editingVendor.id, body);
+    else await window.Api.createVendor(body);
+    toast('Vendor saved', 'success');
+    editingVendor = null;
+    renderHrMasters();
   } catch (e) { toast(e.message, 'error'); }
 }
 async function useMyLocation() {
