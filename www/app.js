@@ -862,6 +862,9 @@ function renderPending() {
   if (!requireWorker()) return;
   withLoading(() => window.Api.getMe(), (w) => {
     if (w.status === 'approved') { location.hash = '#/w/home'; render(); return; }
+    // Not submitted yet (or Home tapped mid-registration): back to the wizard, never a
+    // false "Registration submitted".
+    if (w.status === 'draft') { location.hash = '#/w/register'; render(); return; }
     renderShell(`
       <div class="card center-card">
         <h3>${t('pendingTitle')}</h3>
