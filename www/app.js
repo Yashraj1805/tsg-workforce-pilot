@@ -421,6 +421,8 @@ function renderRegStep1() {
       ${w.aadhaar_qr_at
         ? `<div class="kyc-status ok">✅ Aadhaar scanned — ${esc(w.aadhaar_masked || '')}</div>`
         : `<p class="muted small">Scan the QR code on the Aadhaar card — your details below fill in by themselves.</p>`}
+      ${regState.aadhaarNameWarning ? `<div class="gps-status bad">Name on Aadhaar is "${esc(regState.aadhaarNameWarning)}" — your name below must match it.
+        <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">Use Aadhaar name</button></div>` : ''}
       <button class="btn ${w.aadhaar_qr_at ? 'secondary' : 'primary'} block big" onclick="regScanAadhaar()"><span class="icon-inline">${icon('camera')}</span> ${w.aadhaar_qr_at ? 'Scan again' : 'Scan Aadhaar QR'}</button>
     </div>
     <div class="card">
@@ -453,9 +455,17 @@ async function regScanAadhaar() {
   try {
     const result = await window.Api.aadhaarQr(scan.text);
     regState.worker = result.worker;
-    toast(`Aadhaar scanned (…${result.last4})`, 'success');
+    // R05: names must match. The server won't block the scan (the typed name may just be
+    // a draft), but submit will — so say so now, with the Aadhaar name to copy.
+    regState.aadhaarNameWarning = result.nameMatches === false ? result.name : null;
+    toast(`Aadhaar scanned (…${result.last4})`, result.nameMatches === false ? 'error' : 'success');
     renderRegStep(regState.step);
   } catch (e) { toast(e.message, 'error'); }
+}
+function useAadhaarName(btn) {
+  document.getElementById('f_name').value = regState.aadhaarNameWarning;
+  regState.aadhaarNameWarning = null;
+  btn.parentNode.remove();
 }
 async function regStep1Next() {
   const get = id => document.getElementById(id).value.trim();
