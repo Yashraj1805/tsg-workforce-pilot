@@ -164,6 +164,8 @@ const Api = {
   updateEmailReport: (key, body) => apiFetch('/api/email-reports/' + key, { method: 'PUT', body }),
   sendEmailReportNow: (key) => apiFetch('/api/email-reports/' + key + '/send-now', { method: 'POST' }),
 
+  listBackups: () => apiFetch('/api/system/backups'),
+  backupNow: () => apiFetch('/api/system/backups', { method: 'POST' }),
   // ---- Gate tablet (R20) ----
   listKiosks: () => apiFetch('/api/kiosks'),
   createKiosk: (k) => apiFetch('/api/kiosks', { method: 'POST', body: k }),

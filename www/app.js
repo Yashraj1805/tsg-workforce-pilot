@@ -2579,11 +2579,24 @@ function renderHrUsers() {
           </table>
           ${editingUser ? renderUserForm(roles, locations, vendors) : `<button class="btn primary" onclick="startEditUser(null)">Add user</button>`}
         </div>
+        <div class="card"><h3>Database backups</h3><p class="muted small">Taken automatically every night (BRD: backed up daily).</p><div id="backupList">${spinnerRow('Loading…')}</div>
+          <button class="btn secondary small" onclick="backupNow()">Back up now</button></div>
       `);
       window._adminUsers = users;
+      loadBackups();
       syncUserScopeFields();
     }
   );
+}
+async function loadBackups() {
+  const el = document.getElementById('backupList'); if (!el) return;
+  try {
+    const r = await window.Api.listBackups();
+    el.innerHTML = r.backups.length ? `<p class="small">Last: <b>${new Date(r.backups[0].at).toLocaleString()}</b> (${Math.round(r.backups[0].bytes / 1024)} KB) · ${r.backups.length} kept in <code>${esc(r.dir)}</code></p>` : '<p class="small">No backup yet.</p>';
+  } catch (e) { el.innerHTML = esc(e.message); }
+}
+async function backupNow() {
+  try { const r = await window.Api.backupNow(); toast('Backup saved: ' + r.file, 'success'); loadBackups(); } catch (e) { toast(e.message, 'error'); }
 }
 function startEditUser(id) {
   editingUser = id ? { ...(window._adminUsers || []).find(u => u.id === id) } : {};
