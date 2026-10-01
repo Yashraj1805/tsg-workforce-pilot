@@ -74,6 +74,7 @@ const Api = {
   // devRole only matters on a dev server, for an email logging in for the first time.
   hrOtpVerify: (email, otp, name, devRole) => apiFetch('/api/auth/hr/otp/verify', { method: 'POST', body: { email, otp, name, devRole } }),
   getAdminMe: () => apiFetch('/api/auth/me'),
+  logout: () => apiFetch('/api/auth/logout', { method: 'POST' }),
 
   // ---- Worker profile ----
   getMe: () => apiFetch('/api/workers/me'),

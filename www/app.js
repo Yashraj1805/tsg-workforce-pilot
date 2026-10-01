@@ -86,9 +86,37 @@ async function withLoading(fetcher, onSuccess, loadingLabel) {
     const data = await fetcher();
     onSuccess(data);
   } catch (e) {
+    if (e.status === 401) return sessionEnded(e.message);
     renderShell(`<div class="card">${errorState(e.message || 'Something went wrong')}</div>`);
   }
 }
+
+// ---------------- Sign-out (R17 logout audit, R18 admin idle timeout) ----------------
+// Logout tells the server first so the session is ended (and audited) there, not just
+// forgotten on this phone. Signing out locally still happens if the server is unreachable.
+async function doLogout() {
+  try { await window.Api.logout(); } catch (e) { /* offline: the server session still idles out */ }
+  clearSessionData();
+  location.hash = '#/'; render();
+}
+// The server ended the session (logout elsewhere, idle timeout, deactivated account):
+// back to the start screen with the server's reason, rather than a "Retry" button.
+function sessionEnded(message) {
+  clearSessionData();
+  toast(message || 'Please sign in again', 'error');
+  location.hash = '#/'; render();
+}
+// R18: the admin portal signs itself out after 15 minutes without use, so data isn't left
+// on screen. (The server enforces the same limit on the next request regardless.)
+const ADMIN_IDLE_MS = 15 * 60 * 1000;
+let lastActivity = Date.now();
+['click', 'keydown', 'touchstart', 'input'].forEach(ev => document.addEventListener(ev, () => { lastActivity = Date.now(); }, { passive: true }));
+setInterval(() => {
+  if (isAdminSession(getSession()) && Date.now() - lastActivity > ADMIN_IDLE_MS) {
+    lastActivity = Date.now();
+    doLogout().then(() => toast('Signed out after 15 minutes without use', 'info'));
+  }
+}, 30000);
 
 // ---------------- Smart Alerts / Insights engine ----------------
 // Deterministic, computed-on-the-fly pattern detection over live backend data — the
@@ -959,7 +987,7 @@ function renderLogoutConfirm() {
     <div class="card center-card">
       <h3>${t('logoutConfirmTitle')}</h3>
       <p class="muted">${t('logoutConfirmBody')}</p>
-      <button class="btn danger block" onclick="clearSessionData();location.hash='#/';render()">${t('yesLogout')}</button>
+      <button class="btn danger block" onclick="doLogout()">${t('yesLogout')}</button>
       <button class="btn secondary block" onclick="history.back()">${t('noStay')}</button>
     </div>
   `);
@@ -1925,7 +1953,7 @@ function renderHrLogoutConfirm() {
     <div class="card center-card">
       <h3>${t('logoutConfirmTitle')}</h3>
       <p class="muted">${t('hrLogoutConfirmBody')}</p>
-      <button class="btn danger block" onclick="clearSessionData();location.hash='#/';render()">${t('yesLogout')}</button>
+      <button class="btn danger block" onclick="doLogout()">${t('yesLogout')}</button>
       <button class="btn secondary block" onclick="history.back()">${t('noStay')}</button>
     </div>
   `);
