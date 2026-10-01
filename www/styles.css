@@ -321,3 +321,18 @@ body.scanning-active #app {
 .result-title { font-size: 24px; margin: 0 0 8px; }
 .result-subtitle { color: var(--muted); margin: 0 0 28px; max-width: 320px; }
 .result-ok { max-width: 320px; }
+
+/* Job/education picture tiles (BRD design rule 5) — tap-to-select with a tick,
+   instead of typing, for choices that are really a short fixed list. */
+.choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 14px; }
+.choice-tile {
+  position: relative; background: #fff; border: 1.5px solid var(--border); border-radius: 10px;
+  padding: 14px 10px; min-height: 52px; font-family: inherit; font-size: 14px; font-weight: 600;
+  color: var(--text-strong); cursor: pointer; text-align: center;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+.choice-tile:active { transform: scale(0.97); }
+.choice-tile.selected { border-color: var(--primary); background: var(--primary-tint); color: var(--primary-dark); }
+.choice-tick { position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(15,23,42,0.25); }
+.choice-tick svg { width: 14px; height: 14px; }

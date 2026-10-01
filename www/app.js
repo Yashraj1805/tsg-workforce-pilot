@@ -398,6 +398,23 @@ async function renderRegStep(step) {
   return renderRegStep3();
 }
 
+// BRD design rule 5: "Choices are picture tiles with a tick, for example job and
+// education" — screen 10 ("Education") lists exactly these, plain-text tiles, no typing.
+const QUALIFICATIONS = ['None', '8th', '10th', '12th', 'ITI', 'Graduate'];
+function qualificationLabel(v) {
+  const map = { None: t('qualNone'), '8th': t('qual8th'), '10th': t('qual10th'), '12th': t('qual12th'), ITI: t('qualIti'), Graduate: t('qualGraduate') };
+  return map[v] || v;
+}
+function choiceTileGrid(options, selected, labelFn, onSelect) {
+  return `<div class="choice-grid">${options.map(opt => `
+    <button type="button" class="choice-tile ${selected === opt ? 'selected' : ''}" onclick="${onSelect}('${opt.replace(/'/g, "\\'")}')">
+      ${selected === opt ? `<span class="choice-tick">${icon('check')}</span>` : ''}
+      <span class="choice-label">${esc(labelFn(opt))}</span>
+    </button>
+  `).join('')}</div>`;
+}
+function selectQualification(v) { regState.worker.qualification = v; renderRegStep1(); }
+
 function renderRegStep1() {
   const w = regState.worker;
   renderShell(`
@@ -414,7 +431,8 @@ function renderRegStep1() {
       </select>
       <label>${t('address')}</label><textarea id="f_address" class="input">${esc(w.address||'')}</textarea>
       <label>${t('emergencyContact')}</label><input id="f_emg" class="input" maxlength="10" value="${esc(w.emergency_contact||'')}" />
-      <label>${t('qualification')}</label><input id="f_qual" class="input" value="${esc(w.qualification||'')}" />
+      <label>${t('qualification')}</label>
+      ${choiceTileGrid(QUALIFICATIONS, w.qualification, qualificationLabel, 'selectQualification')}
       <label>${t('experience')}</label><input id="f_exp" type="number" min="0" class="input" value="${esc(w.experience||'')}" />
       <div class="wizard-actions">
         <span></span>
@@ -427,7 +445,7 @@ async function regStep1Next() {
   const get = id => document.getElementById(id).value.trim();
   const fields = {
     name: get('f_name'), fatherName: get('f_father'), dob: get('f_dob'), gender: get('f_gender'),
-    address: get('f_address'), emergencyContact: get('f_emg'), qualification: get('f_qual'), experience: get('f_exp'),
+    address: get('f_address'), emergencyContact: get('f_emg'), qualification: regState.worker.qualification || '', experience: get('f_exp'),
   };
   if (!fields.name) { toast('Name is required', 'error'); return; }
   try {
@@ -435,6 +453,16 @@ async function regStep1Next() {
     renderRegStep(2);
   } catch (e) { toast(e.message, 'error'); }
 }
+
+// BRD screen 8 ("Job") — "tap your job" tiles; list here matches the BRD's own Scope
+// section manpower categories (washing staff, drivers, security guards, housekeeping,
+// office boys, denter-painters, audit staff, IT staff), not just its 6-tile mockup.
+const DESIGNATIONS = ['Washing', 'Driver', 'Security', 'Housekeeping', 'Office boy', 'Denter-painter', 'Audit staff', 'IT staff'];
+function designationLabel(v) {
+  const map = { Washing: t('jobWashing'), Driver: t('jobDriver'), Security: t('jobSecurity'), Housekeeping: t('jobHousekeeping'), 'Office boy': t('jobOfficeBoy'), 'Denter-painter': t('jobDenter'), 'Audit staff': t('jobAudit'), 'IT staff': t('jobIt') };
+  return map[v] || v;
+}
+function selectDesignation(v) { regState.worker.designation = v; renderRegStep2(); }
 
 async function renderRegStep2() {
   await withLoading(
@@ -450,7 +478,8 @@ async function renderRegStep2() {
           <select id="f_vendor" class="input" ${vendors.length===0?'disabled':''}>${vendors.length===0 ? `<option value="">${t('none')}</option>` : vendors.map(v=>`<option value="${v.id}" ${w.vendor_id===v.id?'selected':''}>${esc(v.name)}</option>`).join('')}</select>
           <label>${t('location')}</label>
           <select id="f_location" class="input" ${locations.length===0?'disabled':''}>${locations.length===0 ? `<option value="">${t('none')}</option>` : locations.map(l=>`<option value="${l.id}" ${w.location_id===l.id?'selected':''}>${esc(l.name)}</option>`).join('')}</select>
-          <label>${t('designation')}</label><input id="f_designation" class="input" value="${esc(w.designation||'')}" />
+          <label>${t('designation')}</label>
+          ${choiceTileGrid(DESIGNATIONS, w.designation, designationLabel, 'selectDesignation')}
           <label>${t('doj')}</label><input id="f_doj" type="date" class="input" value="${esc(w.doj||'')}" />
           <h3>${t('capturePhoto')}</h3>
           <div class="selfie-frame">
@@ -479,7 +508,7 @@ async function regStep2Next() {
   if (!regState.worker.photo_data_url) { toast('Please capture a live photo before continuing', 'error'); return; }
   try {
     regState.worker = await window.Api.updateMe({
-      vendorId: get('f_vendor'), locationId: get('f_location'), designation: get('f_designation'), doj: get('f_doj'),
+      vendorId: get('f_vendor'), locationId: get('f_location'), designation: regState.worker.designation || '', doj: get('f_doj'),
     });
     renderRegStep(3);
   } catch (e) { toast(e.message, 'error'); }
