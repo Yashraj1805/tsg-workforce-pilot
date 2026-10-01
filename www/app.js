@@ -870,45 +870,70 @@ function renderPending() {
   });
 }
 
+// Last profile + punches kept on the phone so the home screen (and offline punching, R19)
+// still works with no network.
+const HOME_CACHE_KEY = 'tsg_home_cache';
+async function loadWorkerHomeData() {
+  try {
+    const [w, punches] = await Promise.all([window.Api.getMe(), window.Api.myPunches()]);
+    try { localStorage.setItem(HOME_CACHE_KEY, JSON.stringify({ w, punches })); } catch (e) { /* storage full */ }
+    return { w, punches, offline: false };
+  } catch (e) {
+    if (e.status !== 0) throw e;
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(HOME_CACHE_KEY) || 'null'); } catch (e2) { /* corrupt */ }
+    if (!cached || !cached.w || cached.w.id !== (getSession() || {}).workerId) throw e;
+    return { ...cached, offline: true };
+  }
+}
+
 function renderWorkerHome() {
   if (!requireWorker()) return;
-  withLoading(() => window.Api.getMe(), (w) => {
+  withLoading(loadWorkerHomeData, ({ w, punches, offline }) => {
     if (w.status !== 'approved') { location.hash = '#/w/pending'; render(); return; }
-    withLoading(() => window.Api.myPunches(), (punches) => {
-      window._myWorker = w; window._myPunches = punches;
-      const openIn = lastOpenPunchIn(punches);
-      const today = todayStr(Date.now());
-      const todayStatus = attendanceStatusForDay(punches, today);
-      const completedToday = todayStatus.status !== 'absent' && todayStatus.outTime;
+    // Punches still waiting on the phone count for today's button state.
+    const queued = offlineQueue().filter(i => i.workerId === w.id);
+    const all = [...punches, ...queued.map(i => ({ type: i.payload.type, ts: i.capturedAt, result: 'ok', pending: true }))];
+    window._myWorker = w; window._myPunches = all;
+    const openIn = lastOpenPunchIn(all);
+    const todayStatus = attendanceStatusForDay(all, todayStr(Date.now()));
+    const completedToday = todayStatus.status !== 'absent' && todayStatus.outTime;
 
-      let statusLine = '';
-      if (completedToday) statusLine = `<p class="muted">${t('alreadyOutToday')}</p>`;
-      else if (openIn) statusLine = `<p class="muted">${t('alreadyIn')} ${fmtTime(openIn.ts)}</p>`;
-      else statusLine = `<p class="muted">${t('notPunched')}</p>`;
+    let statusLine = '';
+    if (completedToday) statusLine = `<p class="muted">${t('alreadyOutToday')}</p>`;
+    else if (openIn) statusLine = `<p class="muted">${t('alreadyIn')} ${fmtTime(openIn.ts)}</p>`;
+    else statusLine = `<p class="muted">${t('notPunched')}</p>`;
 
-      renderShell(`
-        <div class="card">
-          <div class="profile-header">
-            ${avatarHtml(w)}
-            <div class="profile-text">
-              <h3>${esc(w.name)}</h3>
-              <div class="muted small">${esc(w.vendor && w.vendor.name)} · ${esc(w.location && w.location.name)} · ${esc(w.designation)}</div>
-            </div>
+    renderShell(`
+      ${offline ? `<div class="gps-status warn" style="margin-bottom:10px">📵 ${bi('नेटवर्क नहीं है — साइट के अंदर पंच फ़ोन में सेव होगा', 'No network — a punch inside the site is saved on the phone')}</div>` : ''}
+      ${queued.length ? `<div class="gps-status warn" style="margin-bottom:10px">⏳ ${bi(`${queued.length} पंच भेजना बाकी है`, `${queued.length} punch(es) waiting to be sent`)}</div>` : ''}
+      <div class="card">
+        <div class="profile-header">
+          ${avatarHtml(w)}
+          <div class="profile-text">
+            <h3>${esc(w.name)}</h3>
+            <div class="muted small">${esc(w.vendor && w.vendor.name)} · ${esc(w.location && w.location.name)} · ${esc(w.designation)}</div>
           </div>
-          ${statusLine}
-          <div id="punchArea">
-            <button class="btn ${openIn?'warn':'success'} block big" ${completedToday?'disabled':''} onclick="doPunch()">
-              ${openIn ? t('punchOut') : t('punchIn')}
-            </button>
-          </div>
-          <p class="muted small">Assigned site: ${esc(w.location?w.location.name:'')} (geofence ${w.location?w.location.radius:''} m)</p>
-          <button class="btn secondary block" onclick="checkMyLocation()"><span class="icon-inline">${icon('pin')}</span> ${t('checkLocation')}</button>
-          <div id="gpsStatus"></div>
-          <div id="gpsMap" class="map-box" style="display:none"></div>
         </div>
-      `);
-    }, t('checkingLocation'));
-  });
+        ${statusLine}
+        <div id="punchArea">
+          <button class="btn ${openIn?'warn':'success'} block big" ${completedToday?'disabled':''} onclick="doPunch()">
+            ${openIn ? t('punchOut') : t('punchIn')}
+          </button>
+        </div>
+        <p class="muted small">Assigned site: ${esc(w.location?w.location.name:'')} (geofence ${w.location?w.location.radius:''} m)</p>
+        <button class="btn secondary block" onclick="checkMyLocation()"><span class="icon-inline">${icon('pin')}</span> ${t('checkLocation')}</button>
+        <div id="gpsStatus"></div>
+        <div id="gpsMap" class="map-box" style="display:none"></div>
+      </div>
+    `);
+    if (completedToday) speak('आज का काम पूरा हो गया', 'Day complete');
+    else if (openIn) speak(`आपने ${fmtTime(openIn.ts)} पर पंच इन किया। जाते समय पंच आउट करें।`, `Punched in at ${fmtTime(openIn.ts)}. Punch out when you leave.`);
+    else speak('पंच इन करने के लिए हरा बटन दबाएँ', 'Press the green button to punch in');
+    // BRD §11 screen 1: "Shows inside or outside site" — without an extra tap.
+    if (!completedToday) checkMyLocation();
+    if (queued.length && !offline) syncOfflinePunches();
+  }, t('checkingLocation'));
 }
 
 async function checkMyLocation() {
@@ -1065,13 +1090,69 @@ async function doPunch() {
   }
 }
 
+// ---- Offline punch (BRD R19, §11 screen 7: "Allowed only inside the site. Send within
+// 12 hours with the original time.") The punch is kept on the phone with Android's
+// tamper-proof elapsed clock (not the wall clock); the server works out the real time
+// and runs every normal check when it arrives. The inside-site check here is only so the
+// worker isn't told "saved" for a punch the server will refuse.
+const OFFLINE_KEY = 'tsg_offline_punches';
+function offlineQueue() { try { return JSON.parse(localStorage.getItem(OFFLINE_KEY) || '[]'); } catch (e) { return []; } }
+function setOfflineQueue(q) { try { localStorage.setItem(OFFLINE_KEY, JSON.stringify(q)); } catch (e) { /* storage full */ } }
+
+async function queueOfflinePunch(payload, w) {
+  const loc = w && w.location;
+  if (!loc || haversineMeters(payload.lat, payload.lng, loc.lat, loc.lng) > loc.radius) {
+    return showResult(false, 'नेटवर्क नहीं है', 'No network', [bi('बिना नेटवर्क पंच सिर्फ़ साइट के अंदर होता है', 'Offline punch is allowed only inside the site')]);
+  }
+  const clock = window.TSGNative.deviceClock ? await window.TSGNative.deviceClock() : { ok: false };
+  if (!clock.ok) return showResult(false, 'नेटवर्क नहीं है', 'No network', [bi('नेटवर्क आने पर फिर पंच करें', 'Punch again when the network is back')]);
+  const q = offlineQueue();
+  q.push({ clientId: 'off_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), workerId: w.id, payload,
+    capturedElapsedMs: clock.elapsedMs, capturedBootCount: clock.bootCount, capturedAt: Date.now() });
+  setOfflineQueue(q);
+  showResult('queued', 'फ़ोन में सेव हुआ', 'Saved on phone', [
+    `${bi('समय', 'Time')}: <b>${fmtTime(Date.now())}</b>`,
+    bi('नेटवर्क आते ही अपने-आप भेज दिया जाएगा (12 घंटे के अंदर)', 'Sent automatically when the network is back (within 12 hours)'),
+  ]);
+}
+
+// Upload queued punches; runs on app start, when the network returns, and every minute
+// while anything is waiting. A refusal by the server (4xx) is final and shown once.
+let offlineSyncing = false;
+async function syncOfflinePunches() {
+  if (offlineSyncing) return;
+  const s = getSession();
+  if (!s || s.role !== 'worker' || s.assisted) return;
+  const q = offlineQueue().filter(i => i.workerId === s.workerId);
+  if (!q.length) return;
+  offlineSyncing = true;
+  try {
+    for (const item of q) {
+      const clock = await window.TSGNative.deviceClock();
+      if (!clock.ok) break;
+      try {
+        await window.Api.offlinePunch({ ...item.payload, clientId: item.clientId, capturedElapsedMs: item.capturedElapsedMs,
+          capturedBootCount: item.capturedBootCount, nowElapsedMs: clock.elapsedMs, nowBootCount: clock.bootCount });
+        toast(`${bi('पंच भेज दिया', 'Offline punch sent')} (${fmtTime(item.capturedAt)})`, 'success');
+      } catch (e) {
+        if (e.status === 0) break; // still offline — try again later
+        toast(`${item.payload.type === 'in' ? 'Punch-in' : 'Punch-out'} ${fmtTime(item.capturedAt)} not accepted: ${e.message}`, 'error');
+      }
+      setOfflineQueue(offlineQueue().filter(i => i.clientId !== item.clientId));
+    }
+  } finally { offlineSyncing = false; }
+  if (location.hash === '#/w/home') renderWorkerHome();
+}
+window.addEventListener('online', syncOfflinePunches);
+setInterval(() => { if (offlineQueue().length) syncOfflinePunches(); }, 60000);
+
 // ---- Full-screen result, read aloud (BRD §7 rule 7, R11, §11 screens 3/5/6) ----
 function showResult(ok, titleHi, titleEn, lines, onClose) {
   stopVoice();
   const el = document.createElement('div');
-  el.className = 'result-screen ' + (ok ? 'ok' : 'bad');
+  el.className = 'result-screen ' + (ok === 'queued' ? 'queued' : ok ? 'ok' : 'bad');
   el.innerHTML = `
-    <div class="result-mark">${ok ? '✓' : '✕'}</div>
+    <div class="result-mark">${ok === 'queued' ? '⏳' : ok ? '✓' : '✕'}</div>
     <div class="result-title">${bi(esc(titleHi), esc(titleEn))}</div>
     ${(lines || []).filter(Boolean).map(l => `<div class="result-line">${l}</div>`).join('')}
     <button class="btn secondary result-close">${bi('ठीक है', 'OK')}</button>`;

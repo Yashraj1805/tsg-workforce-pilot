@@ -112,6 +112,7 @@ const Api = {
 
   // ---- Punches ----
   punch: (data) => apiFetch('/api/punches', { method: 'POST', body: { ...data, deviceId: getDeviceId() } }),
+  offlinePunch: (data) => apiFetch('/api/punches/offline', { method: 'POST', body: { ...data, deviceId: getDeviceId() } }),
   myPunches: () => apiFetch('/api/punches/me'),
   listPunches: (params = {}) => {
     const q = new URLSearchParams(params).toString();

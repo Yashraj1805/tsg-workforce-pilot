@@ -307,6 +307,7 @@ h3 .bi-en { font-size: 0.7em; }
   gap: 12px; padding: 24px; text-align: center; color: #fff; }
 .result-screen.ok { background: #15803d; }
 .result-screen.bad { background: #b91c1c; }
+.result-screen.queued { background: #c2410c; }
 .result-mark { width: 140px; height: 140px; border-radius: 50%; background: rgba(255, 255, 255, 0.18); display: flex; align-items: center;
   justify-content: center; font-size: 96px; font-weight: 800; line-height: 1; }
 .result-title { font-size: 28px; font-weight: 800; }
