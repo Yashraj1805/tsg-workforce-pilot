@@ -2,6 +2,7 @@ import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Geolocation } from '@capacitor/geolocation';
 import { CameraPreview } from '@capacitor-community/camera-preview';
 import { App } from '@capacitor/app';
+import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning';
 
 // Exposes a small, promise-based bridge the plain app.js script can call.
 // Falls back gracefully if running in a plain desktop browser during development.
@@ -99,6 +100,48 @@ async function capturePreviewPhoto() {
   }
 }
 
+// ---- Document capture (BRD R04 / design rule 4: Aadhaar QR and PAN by camera) ----
+
+// Google's code scanner UI (ML Kit). Returns the QR's raw text; decoding the Aadhaar
+// payload happens on the server, never here.
+async function scanQrCode() {
+  try {
+    const { supported } = await BarcodeScanner.isSupported();
+    if (!supported) return { ok: false, error: 'QR scanning is not supported on this phone' };
+    const mod = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable().catch(() => ({ available: true }));
+    if (!mod.available) {
+      // One-time download by Google Play services on first use.
+      await BarcodeScanner.installGoogleBarcodeScannerModule().catch(() => {});
+      return { ok: false, error: 'Setting up the scanner — wait a minute and try again' };
+    }
+    const { barcodes } = await BarcodeScanner.scan({ formats: [BarcodeFormat.QrCode] });
+    if (!barcodes || !barcodes.length) return { ok: false, cancelled: true };
+    return { ok: true, text: barcodes[0].rawValue };
+  } catch (err) {
+    const msg = (err && err.message) || '';
+    if (/cancel/i.test(msg)) return { ok: false, cancelled: true };
+    return { ok: false, error: msg || 'Could not open the QR scanner' };
+  }
+}
+
+// Rear camera, live capture only (no gallery), sized for OCR rather than a selfie.
+async function takeDocumentPhoto() {
+  try {
+    const photo = await Camera.getPhoto({
+      quality: 80,
+      width: 1600,
+      allowEditing: false,
+      resultType: CameraResultType.DataUrl,
+      source: CameraSource.Camera,
+      direction: 'REAR',
+      saveToGallery: false,
+    });
+    return { ok: true, dataUrl: photo.dataUrl };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'Camera unavailable or permission denied' };
+  }
+}
+
 async function getPosition() {
   try {
     const perm = await Geolocation.requestPermissions().catch(() => null);
@@ -127,4 +170,4 @@ async function minimizeApp() {
   try { await App.minimizeApp(); } catch (err) { /* web/dev fallback: no-op */ }
 }
 
-window.TSGNative = { takeSelfie, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };
+window.TSGNative = { takeSelfie, scanQrCode, takeDocumentPhoto, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };

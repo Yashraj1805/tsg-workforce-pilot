@@ -93,6 +93,8 @@ const Api = {
   digilockerInit: (redirectUrl) => apiFetch('/api/kyc/digilocker/init', { method: 'POST', body: { redirectUrl } }),
   digilockerComplete: (id) => apiFetch(`/api/kyc/digilocker/${id}/complete`),
   panVerify: (pan) => apiFetch('/api/kyc/pan/verify', { method: 'POST', body: { pan } }),
+  aadhaarQr: (qrText) => apiFetch('/api/kyc/aadhaar-qr', { method: 'POST', body: { qrText } }),
+  panPhoto: (photoDataUrl) => apiFetch('/api/kyc/pan/photo', { method: 'POST', body: { photoDataUrl } }),
   skipKycDev: () => apiFetch('/api/kyc/skip-dev', { method: 'POST' }),
   detectFace: (frameDataUrl) => apiFetch('/api/kyc/face-detect', { method: 'POST', body: { frameDataUrl } }),
 

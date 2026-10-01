@@ -417,6 +417,13 @@ function renderRegStep1() {
   const w = regState.worker;
   renderShell(`
     <div class="card">
+      <h3>Aadhaar card</h3>
+      ${w.aadhaar_qr_at
+        ? `<div class="kyc-status ok">✅ Aadhaar scanned — ${esc(w.aadhaar_masked || '')}</div>`
+        : `<p class="muted small">Scan the QR code on the Aadhaar card — your details below fill in by themselves.</p>`}
+      <button class="btn ${w.aadhaar_qr_at ? 'secondary' : 'primary'} block big" onclick="regScanAadhaar()"><span class="icon-inline">${icon('camera')}</span> ${w.aadhaar_qr_at ? 'Scan again' : 'Scan Aadhaar QR'}</button>
+    </div>
+    <div class="card">
       <h3>${t('personalDetails')}</h3>
       <label>${t('fullName')}</label><input id="f_name" class="input" value="${esc(w.name||'')}" />
       <label>${t('fatherName')}</label><input id="f_father" class="input" value="${esc(w.father_name||'')}" />
@@ -437,6 +444,18 @@ function renderRegStep1() {
       </div>
     </div>
   `);
+}
+// R04: Aadhaar captured by scanning its QR. The server decodes it, keeps only the
+// masked number, and fills any empty name/DOB/gender — so re-render with what it saved.
+async function regScanAadhaar() {
+  const scan = await window.TSGNative.scanQrCode();
+  if (!scan.ok) { if (!scan.cancelled) toast(scan.error, 'error'); return; }
+  try {
+    const result = await window.Api.aadhaarQr(scan.text);
+    regState.worker = result.worker;
+    toast(`Aadhaar scanned (…${result.last4})`, 'success');
+    renderRegStep(regState.step);
+  } catch (e) { toast(e.message, 'error'); }
 }
 async function regStep1Next() {
   const get = id => document.getElementById(id).value.trim();
@@ -504,15 +523,23 @@ function renderRegStep3() {
   const w = regState.worker;
   renderShell(`
     <div class="card">
-      <h3>Aadhaar (via DigiLocker)</h3>
-      <div class="kyc-status ${w.aadhaar_verified?'ok':''}">${w.aadhaar_verified ? '✅ Aadhaar verified' : '⏳ Not yet verified'}</div>
-      ${!w.aadhaar_verified ? `<button class="btn secondary block" onclick="startDigilocker()">Verify with DigiLocker</button>` : ''}
+      <h3>Aadhaar</h3>
+      <div class="kyc-status ${w.aadhaar_qr_at?'ok':''}">${w.aadhaar_qr_at ? `✅ Card scanned — ${esc(w.aadhaar_masked || '')}` : '⏳ Card not scanned yet'}</div>
+      ${!w.aadhaar_qr_at ? `<button class="btn secondary block" onclick="regScanAadhaar()"><span class="icon-inline">${icon('camera')}</span> Scan Aadhaar QR</button>` : ''}
+      <div class="kyc-status ${w.aadhaar_verified?'ok':''}">${w.aadhaar_verified ? '✅ Aadhaar verified (OTP via DigiLocker)' : '⏳ Not yet verified'}</div>
+      ${!w.aadhaar_verified ? `<button class="btn secondary block" onclick="startDigilocker()">Verify with DigiLocker (Aadhaar OTP)</button>` : ''}
 
       <h3 style="margin-top:18px">PAN</h3>
       <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ PAN verified' : '⏳ Not yet verified'}</div>
       ${!w.pan_verified ? `
-        <input id="f_pan" class="input" maxlength="10" placeholder="ABCDE1234F" style="text-transform:uppercase" />
-        <button class="btn secondary block" onclick="verifyPan()">Verify PAN</button>
+        ${w.pan_photo_data_url ? `<img src="${w.pan_photo_data_url}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
+        ${regState.panRead ? `<div class="kyc-status">PAN read from photo: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
+          <button class="btn primary block" onclick="verifyPan(true)">Yes, verify this PAN</button>` : ''}
+        <button class="btn secondary block" onclick="regPanPhoto()"><span class="icon-inline">${icon('camera')}</span> ${w.pan_photo_data_url ? 'Retake PAN photo' : 'Take photo of PAN card'}</button>
+        ${regState.panManual ? `
+          <input id="f_pan" class="input" maxlength="10" placeholder="ABCDE1234F" style="text-transform:uppercase" />
+          <button class="btn secondary block" onclick="verifyPan(false)">Verify PAN</button>
+        ` : `<button class="link-btn small" onclick="regState.panManual=true;renderRegStep(3)">Can't take a photo? Type the PAN instead</button>`}
       ` : ''}
 
       ${(!w.aadhaar_verified || !w.pan_verified) ? `
@@ -574,11 +601,30 @@ async function checkDigilockerComplete() {
     renderRegStep(3);
   } catch (e) { toast(e.message, 'error'); }
 }
-async function verifyPan() {
-  const pan = document.getElementById('f_pan').value.trim().toUpperCase();
-  if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(pan)) { toast('Enter a valid PAN, e.g. ABCDE1234F', 'error'); return; }
+// R04: PAN by photo — the server reads the number (OCR) and the worker only confirms it.
+async function regPanPhoto() {
+  const photo = await window.TSGNative.takeDocumentPhoto();
+  if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
+  toast('Reading PAN card…', 'info');
   try {
-    const result = await window.Api.panVerify(pan);
+    regState.panRead = await window.Api.panPhoto(photo.dataUrl);
+    regState.worker = await window.Api.getMe();
+    renderRegStep(3);
+  } catch (e) {
+    regState.panRead = null;
+    if (e.data && e.data.manualEntry) regState.panManual = true;
+    toast(e.message, 'error');
+    renderRegStep(3);
+  }
+}
+async function verifyPan(fromPhoto) {
+  let pan;
+  if (!fromPhoto) {
+    pan = document.getElementById('f_pan').value.trim().toUpperCase();
+    if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(pan)) { toast('Enter a valid PAN, e.g. ABCDE1234F', 'error'); return; }
+  }
+  try {
+    const result = await window.Api.panVerify(pan); // no pan = verify the number read from the photo
     regState.worker = result.worker;
     toast('PAN verified', 'success');
     renderRegStep(3);
