@@ -234,7 +234,45 @@ function renderShell(innerHtml) {
   `;
 }
 
-const HR_MORE_ROUTES = ['#/hr/regularisations', '#/hr/exceptions', '#/hr/masters', '#/hr/audit', '#/hr/account', '#/hr/timeguard'];
+// ---------------- Admin roles (BRD §5) ----------------
+// The server decides what each role can do (tsg-workforce-backend/src/rbac.js) and
+// enforces it on every request. The permission list it sends at login is only used
+// here to hide screens and buttons the user would just get a 403 from.
+const ROLE_LABELS = {
+  reporting_manager: 'Reporting Manager', site_hr: 'Site HR', central_hr: 'Central HR',
+  location_head: 'Location Head', vendor_coordinator: 'Vendor Coordinator',
+  mis_finance: 'MIS / Finance', security: 'Security', system_admin: 'System Admin',
+};
+function isAdminSession(s) { return !!s && s.role !== 'worker'; }
+function hasPerm(p) { const s = getSession(); return !!(s && s.permissions && s.permissions.includes(p)); }
+
+// Every admin screen, in nav-priority order. `perms` must all be held to open it; the
+// first three a role can open (among `nav: true`) become its bottom-nav tabs, the rest
+// go under "More".
+const ADMIN_SCREENS = [
+  { hash: '#/hr/dashboard', icon: 'chart', label: () => t('hrDashboard'), perms: ['workers.read', 'punches.read'], nav: true },
+  { hash: '#/hr/approvals', icon: 'check', label: () => t('hrApprovals'), perms: ['workers.approve'], nav: true },
+  { hash: '#/hr/attendance', icon: 'calendar', label: () => t('hrAttendance'), perms: ['workers.read', 'punches.read'], nav: true },
+  { hash: '#/hr/exceptions', icon: 'warn', label: () => t('hrExceptions'), perms: ['punches.read'], nav: true },
+  { hash: '#/hr/masters', icon: 'building', label: () => t('hrMasters'), perms: ['masters.write'], nav: true },
+  { hash: '#/hr/users', icon: 'user', label: () => 'Users', perms: ['users.manage'], nav: true },
+  { hash: '#/hr/audit', icon: 'ledger', label: () => t('hrAudit'), perms: ['audit.read'], nav: true },
+  { hash: '#/hr/timeguard', icon: 'shield', label: () => t('timeGuard'), perms: ['workers.read', 'punches.read'] },
+  { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
+  { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
+];
+const ADMIN_ROUTE_PERMS = { '#/hr/worker': ['workers.read'], '#/hr/more': [], '#/hr/logout-confirm': [] };
+function canOpenAdminRoute(hash) {
+  const screen = ADMIN_SCREENS.find(x => x.hash === hash);
+  const perms = screen ? screen.perms : ADMIN_ROUTE_PERMS[hash];
+  return !!perms && perms.every(hasPerm);
+}
+function adminNavScreens() { return ADMIN_SCREENS.filter(x => x.nav && x.perms.every(hasPerm)).slice(0, 3); }
+function adminMoreScreens() {
+  const inNav = adminNavScreens().map(x => x.hash);
+  return ADMIN_SCREENS.filter(x => !inNav.includes(x.hash) && x.perms.every(hasPerm));
+}
+function adminHomeHash() { const first = adminNavScreens()[0]; return first ? first.hash : '#/hr/account'; }
 
 function navLink(href, iconName, label, forceActive) {
   const active = forceActive != null ? forceActive : location.hash === href;
@@ -249,11 +287,10 @@ function renderNav(role) {
       ${navLink('#/w/menu', 'menu', t('menu'))}
     </nav>`;
   }
+  const moreRoutes = ['#/hr/more', ...adminMoreScreens().map(x => x.hash)];
   return `<nav class="bottom-nav">
-    ${navLink('#/hr/dashboard', 'chart', t('hrDashboard'))}
-    ${navLink('#/hr/approvals', 'check', t('hrApprovals'))}
-    ${navLink('#/hr/attendance', 'calendar', t('hrAttendance'))}
-    ${navLink('#/hr/more', 'grid', t('more'), HR_MORE_ROUTES.includes(location.hash))}
+    ${adminNavScreens().map(x => navLink(x.hash, x.icon, x.label())).join('')}
+    ${navLink('#/hr/more', 'grid', t('more'), moreRoutes.includes(location.hash))}
   </nav>`;
 }
 
@@ -892,6 +929,10 @@ async function hrRequestOtp() {
         <h3>${t('enterOtp')}</h3>
         <p class="muted small">${result.devOtp ? `${t('otpHint')}: ${result.devOtp}` : `OTP sent to ${esc(email)}`}</p>
         <input id="hrOtp" class="input" maxlength="6" inputmode="numeric" />
+        ${result.devOtp ? `
+          <label>Role (dev server only — used if this email has no account yet)</label>
+          <select id="hrDevRole" class="input">${Object.entries(ROLE_LABELS).map(([id, label]) => `<option value="${id}" ${id === 'central_hr' ? 'selected' : ''}>${label}</option>`).join('')}</select>
+        ` : ''}
         <button class="btn primary block" onclick="hrVerifyOtp()">${t('verify')}</button>
       </div>
     `);
@@ -899,26 +940,48 @@ async function hrRequestOtp() {
 }
 async function hrVerifyOtp() {
   const otp = document.getElementById('hrOtp').value.trim();
+  const devRoleEl = document.getElementById('hrDevRole');
   try {
-    const result = await window.Api.hrOtpVerify(loginState.email, otp, loginState.name);
-    setSessionData({ token: result.token, role: 'hr', email: loginState.email, name: result.hrUser.name });
+    const result = await window.Api.hrOtpVerify(loginState.email, otp, loginState.name, devRoleEl ? devRoleEl.value : undefined);
+    setSessionData({ token: result.token, role: result.hrUser.role, permissions: result.permissions, email: result.hrUser.email, name: result.hrUser.name });
     loginState = {}; // otherwise a stale step:'otp' would hijack the back button deep in the app later
-    location.hash = '#/hr/dashboard'; render();
+    location.hash = adminHomeHash(); render();
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// Admin screens: must be signed in as an admin, and the role must be allowed to open
+// the current screen — otherwise land on the role's own home screen instead.
 function requireHr() {
   const s = getSession();
-  if (!s || s.role !== 'hr') { location.hash = '#/'; render(); return null; }
+  if (!isAdminSession(s)) { location.hash = '#/'; render(); return null; }
+  if (!canOpenAdminRoute(location.hash)) { location.hash = adminHomeHash(); render(); return null; }
   return s;
 }
+
+// Pick up role/permission changes a System Admin made since this session signed in
+// (the server already enforces them; this just keeps the visible screens in sync).
+async function refreshAdminPermissions() {
+  const s = getSession();
+  if (!isAdminSession(s)) return;
+  try {
+    const me = await window.Api.getAdminMe();
+    if (me.hrUser.role !== s.role || JSON.stringify(me.permissions) !== JSON.stringify(s.permissions)) {
+      setSessionData({ ...s, role: me.hrUser.role, permissions: me.permissions });
+      render();
+    }
+  } catch (e) { /* offline or signed out — the next API call surfaces it */ }
+}
+
+// Fetches only what the signed-in role is allowed to read; anything else comes back
+// empty instead of failing the whole screen with a 403.
+function fetchIfAllowed(perm, fetcher) { return hasPerm(perm) ? fetcher() : Promise.resolve([]); }
 
 // ---------------- HR: dashboard ----------------
 
 async function loadHrContext() {
   const [workers, locations, vendors, punches, regularisations] = await Promise.all([
-    window.Api.listWorkers(), window.Api.listLocations(), window.Api.listVendors(),
-    window.Api.listPunches(), window.Api.listRegularisations(),
+    fetchIfAllowed('workers.read', () => window.Api.listWorkers()), window.Api.listLocations(), window.Api.listVendors(),
+    fetchIfAllowed('punches.read', () => window.Api.listPunches()), fetchIfAllowed('regularisations.read', () => window.Api.listRegularisations()),
   ]);
   return { workers, locations, vendors, punches, regularisations };
 }
@@ -948,7 +1011,7 @@ function renderHrDashboard() {
         <div class="stat-card"><div class="stat-num">${punchedInToday.size}</div><div class="stat-label">${t('punchedInToday')}</div></div>
         <div class="stat-card"><div class="stat-num">${notPunched}</div><div class="stat-label">${t('notPunched')}</div></div>
         <div class="stat-card warn"><div class="stat-num">${blocked7d}</div><div class="stat-label">${t('blockedAttempts')}</div></div>
-        <div class="stat-card action" onclick="location.hash='#/hr/approvals';render()">
+        <div class="stat-card ${hasPerm('workers.approve') ? 'action' : ''}" ${hasPerm('workers.approve') ? `onclick="location.hash='#/hr/approvals';render()"` : ''}>
           <div class="stat-num">${pendingApprovals}</div><div class="stat-label">${t('pendingApprovals')}</div>
         </div>
       </div>
@@ -1014,7 +1077,7 @@ function renderHrAttendance() {
   const s = requireHr(); if (!s) return;
   const dateSel = window._hrAttDate || todayStr(Date.now());
   withLoading(
-    () => Promise.all([window.Api.listWorkers('approved'), window.Api.listPunches({ date: dateSel }), window.Api.listRegularisations()]),
+    () => Promise.all([window.Api.listWorkers('approved'), window.Api.listPunches({ date: dateSel }), fetchIfAllowed('regularisations.read', () => window.Api.listRegularisations())]),
     ([workers, punches, regs]) => {
       const rows = workers.map(w => {
         const wPunches = punches.filter(p => p.worker_id === w.id);
@@ -1034,7 +1097,7 @@ function renderHrAttendance() {
                 <td>${fmtTime(r.st.inTime)}</td><td>${fmtTime(r.st.outTime)}</td>
                 <td>${r.regularised && r.st.status!=='present' ? statusBadge('present') + ' <span class="badge badge-neutral">Regularised</span>' : statusBadge(r.st.status)}</td>
                 <td>${(r.st.status==='absent' || r.st.status==='missed_punch_out') && !r.regularised ?
-                  (r.regPending ? `<span class="muted small">Pending</span>` : `<button class="btn secondary small" onclick="hrRaiseRegularisation('${r.w.id}','${dateSel}')">${t('raiseRegularisation')}</button>`)
+                  (r.regPending ? `<span class="muted small">Pending</span>` : hasPerm('regularisations.raise') ? `<button class="btn secondary small" onclick="hrRaiseRegularisation('${r.w.id}','${dateSel}')">${t('raiseRegularisation')}</button>` : '')
                   : ''}</td>
               </tr>`).join('')}
             </tbody>
@@ -1129,10 +1192,10 @@ function renderHrRegularisations() {
               ${sorted.map(r => `<tr>
                 <td><a href="javascript:void(0)" onclick="viewWorker('${r.worker_id}')">${esc(nameById[r.worker_id]||r.worker_id)}</a></td><td>${r.date}</td><td>${esc(r.reason)}</td><td>${esc(r.maker)}</td>
                 <td>${statusBadge(r.status)}</td>
-                <td>${r.status==='pending' ? `
+                <td>${r.status==='pending' ? (hasPerm('regularisations.decide') ? `
                   <button class="btn primary small" onclick="hrDecideReg('${r.id}','approved')">${t('approve')}</button>
                   <button class="btn danger small" onclick="hrDecideReg('${r.id}','rejected')">${t('reject')}</button>
-                ` : (r.checker ? `<span class="muted small">by ${esc(r.checker)}</span>` : '')}</td>
+                ` : '') : (r.checker ? `<span class="muted small">by ${esc(r.checker)}</span>` : '')}</td>
               </tr>`).join('')}
             </tbody>
           </table>`}
@@ -1149,9 +1212,12 @@ async function hrDecideReg(id, decision) {
 function renderHrExceptions() {
   const s = requireHr(); if (!s) return;
   withLoading(
-    () => Promise.all([window.Api.listPunches({ result: 'blocked' }), window.Api.listWorkers()]),
-    ([blocked, workers]) => {
-      const nameById = Object.fromEntries(workers.map(w => [w.id, w.name]));
+    () => window.Api.listPunches({ result: 'blocked' }),
+    (blocked) => {
+      // worker_name comes joined in from the server, so Security (no worker-list
+      // access) still sees whose attempt it was; only roles that can open a worker
+      // record get the name as a link.
+      const canView = hasPerm('workers.read');
       const sorted = [...blocked].sort((a, b) => b.ts - a.ts);
       renderShell(`
         <div class="card">
@@ -1160,7 +1226,7 @@ function renderHrExceptions() {
             <div class="approval-row">
               ${p.selfie_data_url ? `<img src="${p.selfie_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}
               <div class="approval-info">
-                <b><a href="javascript:void(0)" onclick="viewWorker('${p.worker_id}')" style="color:inherit">${esc(nameById[p.worker_id]||p.worker_id)}</a></b> — ${p.type.toUpperCase()} <span class="badge badge-bad">${esc(p.reason)}</span><br/>
+                <b>${canView ? `<a href="javascript:void(0)" onclick="viewWorker('${p.worker_id}')" style="color:inherit">${esc(p.worker_name||p.worker_id)}</a>` : esc(p.worker_name||p.worker_id)}</b> — ${p.type.toUpperCase()} <span class="badge badge-bad">${esc(p.reason)}</span><br/>
                 <span class="muted small">${new Date(p.ts).toLocaleString()} · accuracy ${p.accuracy||'?'}m · distance ${p.distance_m!=null?p.distance_m+'m':'?'}</span>
                 ${p.face_match_note ? `<br/><span class="muted small">${t('aiNote')}: ${esc(p.face_match_note)}</span>` : ''}
               </div>
@@ -1206,14 +1272,8 @@ function renderHrMore() {
   withLoading(loadHrContext, (ctx) => {
     const pendingReg = ctx.regularisations.filter(r => r.status === 'pending').length;
     const flagCount = computeTimeGuardFlags(ctx).length;
-    const tiles = [
-      ['#/hr/timeguard', 'shield', t('timeGuard'), flagCount],
-      ['#/hr/regularisations', 'doc', t('hrRegularisations'), pendingReg],
-      ['#/hr/exceptions', 'warn', t('hrExceptions'), null],
-      ['#/hr/masters', 'building', t('hrMasters'), null],
-      ['#/hr/audit', 'ledger', t('hrAudit'), null],
-      ['#/hr/account', 'user', t('account'), null],
-    ];
+    const counts = { '#/hr/timeguard': flagCount, '#/hr/regularisations': pendingReg };
+    const tiles = adminMoreScreens().map(x => [x.hash, x.icon, x.label(), counts[x.hash] || null]);
     renderShell(`
       <div class="more-grid">
         ${tiles.map(([href, iconName, label, count]) => `
@@ -1404,6 +1464,96 @@ async function addLocation() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// ---------------- System Admin: admin-portal users ----------------
+// Create users with a role and, for location/vendor-scoped roles, the site or vendor
+// they can see. Which roles need which scope comes from the server (/admin-users/roles).
+
+let editingUser = null; // null = not editing; {} = new user; {...row} = editing that user
+function renderHrUsers() {
+  const s = requireHr(); if (!s) return;
+  withLoading(
+    () => Promise.all([window.Api.listAdminUsers(), window.Api.listAdminRoles(), window.Api.listLocations(), window.Api.listVendors()]),
+    ([users, roles, locations, vendors]) => {
+      window._adminRoles = roles;
+      const locName = Object.fromEntries(locations.map(l => [l.id, l.name]));
+      const vendorName = Object.fromEntries(vendors.map(v => [v.id, v.name]));
+      const scopeText = (u) => u.location_id ? locName[u.location_id] || '?' : u.vendor_id ? vendorName[u.vendor_id] || '?' : '';
+      renderShell(`
+        <div class="card">
+          <h3>Users</h3>
+          <table class="tbl">
+            <thead><tr><th>${t('name')}</th><th>Role</th><th>Site / vendor</th><th>${t('status')}</th><th></th></tr></thead>
+            <tbody>${users.map(u => `<tr>
+              <td>${esc(u.name)}<br/><span class="muted small">${esc(u.email)}</span></td>
+              <td>${esc(ROLE_LABELS[u.role] || u.role)}</td>
+              <td>${esc(scopeText(u))}</td>
+              <td>${u.status === 'active' ? '<span class="badge badge-ok">Active</span>' : '<span class="badge badge-bad">Inactive</span>'}</td>
+              <td><button class="btn secondary small" onclick="startEditUser('${u.id}')">Edit</button></td>
+            </tr>`).join('')}</tbody>
+          </table>
+          ${editingUser ? renderUserForm(roles, locations, vendors) : `<button class="btn primary" onclick="startEditUser(null)">Add user</button>`}
+        </div>
+      `);
+      window._adminUsers = users;
+      syncUserScopeFields();
+    }
+  );
+}
+function startEditUser(id) {
+  editingUser = id ? { ...(window._adminUsers || []).find(u => u.id === id) } : {};
+  renderHrUsers();
+}
+function renderUserForm(roles, locations, vendors) {
+  const u = editingUser, isNew = !u.id;
+  return `
+    <div class="worker-summary">
+      <h3>${isNew ? 'Add user' : 'Edit: ' + esc(u.email)}</h3>
+      <label>${t('name')}</label><input id="au_name" class="input" value="${esc(u.name || '')}" />
+      ${isNew ? `<label>Email</label><input id="au_email" class="input" placeholder="name@thesachdevgroup.com" />` : ''}
+      <label>Role</label>
+      <select id="au_role" class="input" onchange="syncUserScopeFields()">${roles.map(r => `<option value="${r.id}" ${u.role === r.id ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select>
+      <div id="au_loc_wrap"><label>${t('location')}</label>
+        <select id="au_location" class="input"><option value="">—</option>${locations.map(l => `<option value="${l.id}" ${u.location_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+      <div id="au_vendor_wrap"><label>${t('vendor')}</label>
+        <select id="au_vendor" class="input"><option value="">—</option>${vendors.map(v => `<option value="${v.id}" ${u.vendor_id === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>
+      <p class="muted small" id="au_scope_hint"></p>
+      ${isNew ? '' : `<label>${t('status')}</label>
+        <select id="au_status" class="input">
+          <option value="active" ${u.status === 'active' ? 'selected' : ''}>Active</option>
+          <option value="inactive" ${u.status === 'inactive' ? 'selected' : ''}>Inactive (cannot log in)</option>
+        </select>`}
+      <div class="wizard-actions">
+        <button class="btn secondary" onclick="editingUser=null;renderHrUsers()">${t('cancel')}</button>
+        <button class="btn primary" onclick="saveUser()">${t('save')}</button>
+      </div>
+    </div>
+  `;
+}
+// Show only the scope picker the selected role actually uses.
+function syncUserScopeFields() {
+  const roleEl = document.getElementById('au_role'); if (!roleEl) return;
+  const role = (window._adminRoles || []).find(r => r.id === roleEl.value) || {};
+  document.getElementById('au_loc_wrap').style.display = role.scope === 'location' ? '' : 'none';
+  document.getElementById('au_vendor_wrap').style.display = role.scope === 'vendor' ? '' : 'none';
+  const hints = {
+    manager: 'Sees workers whose reporting manager email is this user\'s email.',
+    all: 'Sees workers at every location.',
+    none: 'No access to worker data — sets up vendors, locations and users.',
+  };
+  document.getElementById('au_scope_hint').textContent = hints[role.scope] || '';
+}
+async function saveUser() {
+  const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
+  const body = { name: val('au_name'), role: val('au_role'), locationId: val('au_location') || null, vendorId: val('au_vendor') || null };
+  try {
+    if (editingUser.id) await window.Api.updateAdminUser(editingUser.id, { ...body, status: val('au_status') });
+    else await window.Api.createAdminUser({ ...body, email: val('au_email') });
+    toast('User saved', 'success');
+    editingUser = null;
+    renderHrUsers();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 function renderHrAudit() {
   const s = requireHr(); if (!s) return;
   withLoading(() => window.Api.listAudit(), (rows) => {
@@ -1427,6 +1577,7 @@ function renderHrAccount() {
       <div class="avatar" style="margin:0 auto 12px; width:64px; height:64px; font-size:22px">${esc(initials)}</div>
       <h3>${esc(s.name)}</h3>
       <p class="muted">${esc(s.email)}</p>
+      <span class="badge badge-neutral">${esc(ROLE_LABELS[s.role] || s.role)}</span>
       <div style="margin:16px 0">
         <label>${t('language')}</label><br/>
         <div class="lang-toggle">
@@ -1464,7 +1615,7 @@ function render() {
   const s = getSession();
   if (hash === '#/' || hash === '') {
     if (s && s.role === 'worker') { location.hash = hash = '#/w/home'; }
-    else if (s && s.role === 'hr') { location.hash = hash = '#/hr/dashboard'; }
+    else if (isAdminSession(s)) { location.hash = hash = adminHomeHash(); }
     else return renderSplash();
   }
   const routes = {
@@ -1486,6 +1637,7 @@ function render() {
     '#/hr/timeguard': renderHrTimeGuard,
     '#/hr/account': renderHrAccount,
     '#/hr/worker': renderHrWorkerDetail,
+    '#/hr/users': renderHrUsers,
     '#/hr/logout-confirm': renderHrLogoutConfirm,
   };
   const fn = routes[hash];
@@ -1502,6 +1654,7 @@ if (document.readyState === 'loading') {
 } else {
   render();
 }
+refreshAdminPermissions();
 
 // Last-resort safety net: if anything ever throws uncaught during rendering, show a
 // visible error instead of silently leaving a blank screen.
@@ -1547,7 +1700,7 @@ function handleBackButton() {
     window.TSGNative.minimizeApp(); // at the true root with nothing to go back to — minimize, don't kill
     return;
   }
-  const homeHash = s.role === 'worker' ? '#/w/home' : '#/hr/dashboard';
+  const homeHash = s.role === 'worker' ? '#/w/home' : adminHomeHash();
   if (hash !== homeHash) { location.hash = homeHash; render(); return; }
   window.TSGNative.minimizeApp();
 }

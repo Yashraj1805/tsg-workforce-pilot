@@ -71,7 +71,9 @@ const Api = {
   workerOtpRequest: (mobile) => apiFetch('/api/auth/worker/otp/request', { method: 'POST', body: { mobile } }),
   workerOtpVerify: (mobile, otp) => apiFetch('/api/auth/worker/otp/verify', { method: 'POST', body: { mobile, otp } }),
   hrOtpRequest: (email) => apiFetch('/api/auth/hr/otp/request', { method: 'POST', body: { email } }),
-  hrOtpVerify: (email, otp, name) => apiFetch('/api/auth/hr/otp/verify', { method: 'POST', body: { email, otp, name } }),
+  // devRole only matters on a dev server, for an email logging in for the first time.
+  hrOtpVerify: (email, otp, name, devRole) => apiFetch('/api/auth/hr/otp/verify', { method: 'POST', body: { email, otp, name, devRole } }),
+  getAdminMe: () => apiFetch('/api/auth/me'),
 
   // ---- Worker profile ----
   getMe: () => apiFetch('/api/workers/me'),
@@ -115,6 +117,12 @@ const Api = {
 
   // ---- Audit ----
   listAudit: () => apiFetch('/api/audit'),
+
+  // ---- Admin users (System Admin) ----
+  listAdminRoles: () => apiFetch('/api/admin-users/roles'),
+  listAdminUsers: () => apiFetch('/api/admin-users'),
+  createAdminUser: (u) => apiFetch('/api/admin-users', { method: 'POST', body: u }),
+  updateAdminUser: (id, u) => apiFetch('/api/admin-users/' + id, { method: 'PUT', body: u }),
 };
 
 window.Api = Api;

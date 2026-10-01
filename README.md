@@ -68,9 +68,13 @@ clearing app data to see the setup screen again.
 - Worker: enter any 10-digit mobile number → OTP screen shows the code directly
   (dev mode, no real SMS yet) → registration wizard (personal details → vendor/site/
   photo → Aadhaar via DigiLocker + PAN) → submit → HR approval → punch in/out.
-- HR: enter a company email + name → OTP shown directly (dev mode) → dashboard,
-  approvals, attendance register, AI Time Guard, vendor/location masters (with the
-  map picker), regularisations, audit log.
+- HR / admin portal: enter a company email + name → OTP shown directly (dev mode),
+  with a role picker for a first-time email → the screens that role is allowed
+  (BRD §5): e.g. Central HR gets dashboard, approvals, attendance register, AI Time
+  Guard, regularisations; System Admin gets vendor/location masters (with the map
+  picker), users and audit log; Security gets blocked punches and audit log. The
+  backend enforces all of this — see "Roles and access" in its README; the app only
+  hides what the role can't use.
 - Aadhaar/PAN verification will fail with a clear "Setu credentials not configured"
   error until real sandbox credentials are added to the backend's `.env` — that's
   expected right now, not a bug.
