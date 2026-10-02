@@ -89,6 +89,31 @@ function avatarHtml(worker) {
 function emptyState(message, iconName) {
   return `<div class="empty-state"><div class="empty-icon">${icon(iconName || 'inbox')}</div><p>${message}</p></div>`;
 }
+// A thumbnail only when there's an actual image — a blocked punch can carry a selfie
+// field that isn't a usable data: URL, which the bare <img> rendered as a broken icon.
+function thumbHtml(dataUrl) {
+  // < 200 chars is a bare header with no pixels (seen on test rows), never a real photo.
+  return dataUrl && /^data:image\//.test(dataUrl) && dataUrl.length > 200 ? `<img src="${esc(dataUrl)}" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`;
+}
+// Punch block reasons are stored as codes (punches.js); HR reads words.
+const REASON_LABELS = {
+  fake_gps: 'Fake GPS', outside_geofence: 'Outside site', low_accuracy: 'Weak GPS signal', face_mismatch: "Face didn't match",
+  spoof_suspected: 'Photo / screen suspected', device_mismatch: 'Different phone', offline_expired: 'Offline punch too old',
+  offline_rebooted: 'Phone restarted (offline punch)', offline_no_clock: 'Offline punch, no clock proof',
+};
+function reasonLabel(code) { return REASON_LABELS[code] || String(code || '').replace(/_/g, ' '); }
+// The stored AI note is a diagnostic string ("[check 1] samePerson=false confidence=0.99
+// spoofSuspected=false: The faces…"). HR gets the human sentences; the raw form stays
+// behind a tap for anyone who needs to see exactly what the model said.
+function aiNoteHtml(note) {
+  if (!note) return '';
+  const sentences = note.split(/\s*\|\s*/).map(part => {
+    const m = /:\s*(.+)$/.exec(part.replace(/^\[[^\]]*\]\s*/, ''));
+    return m ? m[1].trim() : '';
+  }).filter(Boolean);
+  const summary = sentences.length ? sentences.join(' ') : note;
+  return `<details class="ai-note"><summary class="muted small">${t('aiNote')}: ${esc(summary)}</summary><div class="muted small" style="margin-top:4px;word-break:break-word">${esc(note)}</div></details>`;
+}
 function spinnerRow(label) {
   return `<div class="spinner-row" role="status" aria-live="polite"><div class="spinner"></div><span>${label}</span></div>`;
 }
@@ -289,16 +314,29 @@ function renderShell(innerHtml) {
     <header class="topbar">
       <div class="topbar-title">
         <div class="app-name">${t('appName')}</div>
-        <div class="demo-badge">${getApiBase() ? esc(getApiBase().replace(/^https?:\/\//, '')) : t('demoBadge')}</div>
+        ${s ? '' : `<div class="demo-badge">${getApiBase() ? esc(getApiBase().replace(/^https?:\/\//, '')) : t('demoBadge')}</div>`}
       </div>
       <div class="topbar-actions">
-        <button class="lang-btn ${currentLang==='en'?'active':''}" onclick="switchLang('en')">EN</button>
-        <button class="lang-btn ${currentLang==='hi'?'active':''}" onclick="switchLang('hi')">HI</button>
+        <div class="lang-seg" role="group" aria-label="Language">
+          <button class="lang-btn ${currentLang==='en'?'active':''}" onclick="switchLang('en')">EN</button>
+          <button class="lang-btn ${currentLang==='hi'?'active':''}" onclick="switchLang('hi')">HI</button>
+        </div>
       </div>
     </header>
     <main class="content">${innerHtml}</main>
     ${nav}
   `;
+  labelTables(app);
+}
+// Copies each multi-column table's header text onto its cells as data-label, which the
+// phone-width stylesheet turns into "LABEL  value" stacked rows (no sideways scrolling).
+// Runs on every render, and on any table injected later (see billDetail).
+function labelTables(root) {
+  root.querySelectorAll('table.tbl').forEach(tbl => {
+    const labels = [...tbl.querySelectorAll('thead th')].map(th => th.textContent.trim());
+    if (!labels.length) return;
+    tbl.querySelectorAll('tbody tr').forEach(tr => [...tr.children].forEach((td, i) => td.setAttribute('data-label', labels[i] || '')));
+  });
 }
 
 // ---------------- Admin roles (BRD §5) ----------------
@@ -319,7 +357,11 @@ function hasPerm(p) { const s = getSession(); return !!(s && s.permissions && s.
 const ADMIN_SCREENS = [
   // Security's first tab: "Security at the gate checks the portal" (proposal).
   { hash: '#/hr/gate', icon: 'shield', label: () => 'Gate check', perms: ['workers.gatecheck'], nav: true, onlyWithout: 'workers.read' },
-  { hash: '#/hr/dashboard', icon: 'chart', label: () => t('hrDashboard'), perms: ['workers.read', 'punches.read'], nav: true },
+  // Role-tailored home screens — these replace the generic dashboard (below) for the
+  // one role each is built for, so that role never sees two dashboard tabs.
+  { hash: '#/hr/location-dashboard', icon: 'chart', label: () => 'My location', perms: ['workers.read', 'punches.read'], nav: true, onlyRole: ['location_head'] },
+  { hash: '#/hr/finance-dashboard', icon: 'chart', label: () => 'Finance overview', perms: ['billing.read'], nav: true, onlyRole: ['mis_finance'] },
+  { hash: '#/hr/dashboard', icon: 'chart', label: () => dashLabel(), perms: ['workers.read', 'punches.read'], nav: true, hiddenIfVisible: ['#/hr/location-dashboard', '#/hr/finance-dashboard'] },
   { hash: '#/hr/approvals', icon: 'check', label: () => t('hrApprovals'), perms: ['workers.approve'], nav: true },
   { hash: '#/hr/assist', icon: 'user', label: () => 'Register worker', perms: ['workers.register_assisted'], nav: true },
   { hash: '#/hr/attendance', icon: 'calendar', label: () => t('hrAttendance'), perms: ['workers.read', 'punches.read'], nav: true },
@@ -339,17 +381,32 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
 ];
 const ADMIN_ROUTE_PERMS = { '#/hr/worker': ['workers.read'], '#/hr/more': [], '#/hr/logout-confirm': [] };
+// onlyRole: shown only to a listed role (a tailored dashboard built for that one role).
+// hiddenIfVisible: hidden only once one of the listed replacement screens is actually
+// visible (perms and all) — not just "this role has a replacement," so a role never
+// ends up with zero dashboards if its replacement's permissions ever turn out not to
+// match what's actually granted (e.g. an RBAC edit later gives mis_finance a role
+// without billing.read) — the generic dashboard stays as a fallback in that case.
+function screenVisible(x) {
+  const s = getSession();
+  const role = s && s.role;
+  if (x.onlyRole && !x.onlyRole.includes(role)) return false;
+  if (!x.perms.every(hasPerm)) return false;
+  if (x.hiddenIfVisible && x.hiddenIfVisible.some(h => { const other = ADMIN_SCREENS.find(y => y.hash === h); return other && screenVisible(other); })) return false;
+  return true;
+}
 function canOpenAdminRoute(hash) {
   const screen = ADMIN_SCREENS.find(x => x.hash === hash);
-  const perms = screen ? screen.perms : ADMIN_ROUTE_PERMS[hash];
+  if (screen) return screenVisible(screen);
+  const perms = ADMIN_ROUTE_PERMS[hash];
   return !!perms && perms.every(hasPerm);
 }
 // onlyWithout: a tab only for roles lacking that permission (e.g. Gate check is Security's
 // main tab; HR roles, who can see workers, find it under More).
-function adminNavScreens() { return ADMIN_SCREENS.filter(x => x.nav && (!x.onlyWithout || !hasPerm(x.onlyWithout)) && x.perms.every(hasPerm)).slice(0, 3); }
+function adminNavScreens() { return ADMIN_SCREENS.filter(x => x.nav && (!x.onlyWithout || !hasPerm(x.onlyWithout)) && screenVisible(x)).slice(0, 3); }
 function adminMoreScreens() {
   const inNav = adminNavScreens().map(x => x.hash);
-  return ADMIN_SCREENS.filter(x => !inNav.includes(x.hash) && x.perms.every(hasPerm));
+  return ADMIN_SCREENS.filter(x => !inNav.includes(x.hash) && screenVisible(x));
 }
 function adminHomeHash() { const first = adminNavScreens()[0]; return first ? first.hash : '#/hr/account'; }
 
@@ -446,6 +503,9 @@ function resendOtpButton(onclickJs, seconds) {
 let loginState = {};
 
 function startWorkerLogin() {
+  // Starting a fresh login means whatever session was in storage is being replaced —
+  // otherwise renderShell draws the old session's bottom nav under the login card.
+  clearSessionData();
   loginState = { step: 'mobile' };
   renderShell(`
     <div class="card center-card">
@@ -455,16 +515,26 @@ function startWorkerLogin() {
     </div>
   `);
 }
-async function workerRequestOtp(resend) {
+// Where the OTP went (the server picks WhatsApp first for a mobile, SMS if that fails),
+// plus the "send on SMS instead" escape hatch when it went by WhatsApp — the worker may
+// have WhatsApp on a different number, or none at all.
+function otpSentLine(result, mobile, smsOnclick) {
+  if (result.devOtp) return `<p class="muted small">${t('otpHint')}: ${result.devOtp}</p>`;
+  const where = { whatsapp: `WhatsApp (${esc(mobile)})`, sms: `SMS (${esc(mobile)})`, email: esc(mobile) }[result.channel] || esc(mobile);
+  const icon = result.channel === 'whatsapp' ? '💬 ' : result.channel === 'sms' ? '📩 ' : '';
+  return `<p class="muted small">${icon}${bi('OTP भेजा गया', 'OTP sent to')} ${where}</p>` +
+    (result.channel === 'whatsapp' && smsOnclick ? `<button class="link-btn small" onclick="${smsOnclick}">${bi('WhatsApp पर नहीं आया? SMS पर भेजें', "Didn't get it on WhatsApp? Send on SMS")}</button>` : '');
+}
+async function workerRequestOtp(resend, channel) {
   const mobile = resend ? loginState.mobile : document.getElementById('loginMobile').value.trim();
   if (!/^\d{10}$/.test(mobile)) { toast(t('invalidMobile'), 'error'); return; }
   try {
-    const result = await window.Api.workerOtpRequest(mobile);
+    const result = await window.Api.workerOtpRequest(mobile, channel);
     loginState = { step: 'otp', mobile };
     renderShell(`
       <div class="card center-card">
         <h3>${t('enterOtp')}</h3>
-        <p class="muted small">${result.devOtp ? `${t('otpHint')}: ${result.devOtp}` : `OTP sent to ${esc(mobile)}`}</p>
+        ${otpSentLine(result, mobile, "workerRequestOtp(true, 'sms')")}
         <input id="loginOtp" class="input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" />
         ${resendOtpButton("workerRequestOtp(true)", result.resendInSeconds)}
         <button class="btn primary block" onclick="workerVerifyOtp()">${t('verify')}</button>
@@ -616,6 +686,10 @@ function regAadhaar() {
       <button class="btn ${w.aadhaar_qr_at ? 'secondary' : 'primary'} block big" onclick="regScanAadhaar()">📷 ${w.aadhaar_qr_at ? bi('फिर से स्कैन करें', 'Scan again') : bi('आधार QR स्कैन करें', 'Scan Aadhaar QR')}</button>
       ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('QR नहीं पढ़ा गया। आधार का QR बहुत घना होता है — उसकी साफ़ फोटो लें: कार्ड सीधा रखें, QR फोटो में बड़ा दिखे, रोशनी अच्छी हो, चमक न हो।', "Couldn't read the QR. The Aadhaar QR is very dense — take a clear photo of it instead: card flat, QR large in the photo, good light, no glare.")}</div>` : ''}
       <button class="btn ${regState.qrHelp ? 'primary' : 'secondary'} block" onclick="regPhotoAadhaarQr()">🖼️ ${bi('QR की फोटो लें', 'Take a photo of the QR instead')}</button>
+      ${w.aadhaar_qr_at ? `
+        <div class="kyc-status ${w.aadhaar_verified ? 'ok' : ''}" style="margin-top:14px">${w.aadhaar_verified ? '✅ ' + bi('OTP से पुष्टि हो गई', 'Verified with OTP') : '⏳ ' + bi('अब OTP से पुष्टि करें', 'Now verify with OTP')}</div>
+        ${!w.aadhaar_verified ? `<button class="btn primary block" onclick="startDigilocker()">🔐 ${bi('आधार OTP से पुष्टि करें', 'Verify Aadhaar with OTP')}</button>
+          <p class="muted small">${bi('OTP आपके आधार से जुड़े मोबाइल पर आएगा।', 'The OTP goes to the mobile linked to your Aadhaar.')}</p>` : ''}` : ''}
       ${w.aadhaar_qr_at || w.name ? `
         <label>${t('fullName')}</label><input id="f_name" class="input" value="${esc(w.name||'')}" />
         <label>${t('fatherName')}</label><input id="f_father" class="input" value="${esc(w.father_name||'')}" />
@@ -683,10 +757,10 @@ function regPan() {
   const w = regState.worker;
   renderShell(`
     <div class="card">
-      ${regHeader(4, 'पैन कार्ड और जाँच', 'PAN card and verification')}
-      <div class="kyc-status ${w.aadhaar_verified?'ok':''}">${w.aadhaar_verified ? '✅ Aadhaar verified (OTP via DigiLocker)' : '⏳ Aadhaar not yet verified'}</div>
-      ${!w.aadhaar_verified ? `<button class="btn secondary block" onclick="startDigilocker()">Verify Aadhaar with OTP (DigiLocker)</button>` : ''}
-      <div class="kyc-status ${w.pan_verified?'ok':''}" style="margin-top:12px">${w.pan_verified ? '✅ PAN verified' : '⏳ PAN not yet verified'}</div>
+      ${regHeader(4, 'पैन कार्ड', 'PAN card')}
+      ${!w.aadhaar_verified ? `<div class="gps-status warn">${bi('आधार की OTP पुष्टि अभी बाकी है — पिछले स्टेप में करें।', 'Aadhaar OTP verification is still pending — do it in the previous step.')}
+        <button class="btn secondary small" style="margin-top:6px" onclick="renderRegStep(3)">${bi('आधार पर जाएँ', 'Go to Aadhaar')}</button></div>` : ''}
+      <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ ' + bi('पैन की पुष्टि हो गई', 'PAN verified') : '⏳ ' + bi('पैन की पुष्टि बाकी है', 'PAN not yet verified')}</div>
       ${!w.pan_verified ? `
         ${w.pan_photo_data_url ? `<img src="${w.pan_photo_data_url}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
         ${regState.panRead ? `<div class="kyc-status">PAN read from photo: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
@@ -697,7 +771,7 @@ function regPan() {
           <button class="btn secondary block" onclick="verifyPan(false)">Verify PAN</button>
         ` : `<button class="link-btn small" onclick="regState.panManual=true;renderRegStep(4)">Can't take a photo? Type the PAN instead</button>`}
       ` : ''}
-      ${(!w.aadhaar_verified || !w.pan_verified) ? `
+      ${(!w.aadhaar_verified || !w.pan_verified) && regState.opts.devSkipAllowed ? `
         <div class="gps-status warn" style="margin-top:16px">
           <div>${t('devSkipHint')}</div>
           <button class="btn warn block" style="margin-top:8px" onclick="skipKycDev()">${t('devSkipButton')}</button>
@@ -937,9 +1011,9 @@ function renderWorkerHome() {
     const completedToday = todayStatus.status !== 'absent' && todayStatus.outTime;
 
     let statusLine = '';
-    if (completedToday) statusLine = `<p class="muted">${t('alreadyOutToday')}</p>`;
-    else if (openIn) statusLine = `<p class="muted">${t('alreadyIn')} ${fmtTime(openIn.ts)}</p>`;
-    else statusLine = `<p class="muted">${t('notPunched')}</p>`;
+    if (completedToday) statusLine = `<div class="punch-status done">${t('alreadyOutToday')}</div>`;
+    else if (openIn) statusLine = `<div class="punch-status in">${t('alreadyIn')} ${fmtTime(openIn.ts)}</div>`;
+    else statusLine = `<div class="punch-status">${t('notPunched')}</div>`;
 
     renderShell(`
       ${offline ? `<div class="gps-status warn" style="margin-bottom:10px">📵 ${bi('नेटवर्क नहीं है — साइट के अंदर पंच फ़ोन में सेव होगा', 'No network — a punch inside the site is saved on the phone')}</div>` : ''}
@@ -1051,6 +1125,11 @@ function scanFaceForPunch() {
       let stopped = false;
       let attempts = 0;
       const MAX_ATTEMPTS = 20; // each attempt is faster now (smaller image, less dead time), so more fit in roughly the same wall-clock budget
+      // Passive liveness (phase 1): the low-res preview sample from the attempt BEFORE
+      // the one that locks is a free second frame, taken a fraction of a second earlier
+      // — paired with the final full-quality capture for an anti-spoofing check on the
+      // server (geminiClient.checkLiveness), no extra camera call or worker action needed.
+      let prevSampleDataUrl = null;
 
       async function cleanup() {
         stopped = true;
@@ -1080,13 +1159,20 @@ function scanFaceForPunch() {
             const photo = await window.TSGNative.capturePreviewPhoto();
             await cleanup();
             if (!photo.ok) { resolve({ ok: false, error: photo.error }); return; }
-            resolve({ ok: true, dataUrl: photo.dataUrl });
+            resolve({ ok: true, dataUrl: photo.dataUrl, livenessFrameDataUrl: prevSampleDataUrl });
             return;
           }
           statusEl.textContent = detectResult.reason || t('scanHint');
         } catch (e) {
           statusEl.textContent = e.message || t('scanHint');
         }
+        // Skip attempt 1 as a liveness candidate — right after the camera opens,
+        // auto-exposure/focus hasn't settled yet and the frame can come back black or
+        // blank even though grabPreviewSample() reports ok (confirmed live: a real punch
+        // got wrongly blocked as a spoof because the "earlier" frame was pitch black from
+        // camera warm-up, not an actual spoof attempt). Only start offering frames once
+        // the preview has had at least one full cycle to stabilize.
+        if (attempts >= 2) prevSampleDataUrl = sample.dataUrl;
         // The round trip itself (upload + Gemini inference) already paces each attempt —
         // this just stops back-to-back hammering if a response ever comes back instantly.
         setTimeout(loop, 300);
@@ -1114,8 +1200,12 @@ async function doPunch() {
   // Fake-GPS signal from the phone (BRD R10); the server decides what to do with it.
   const integrity = window.TSGNative.mockLocationCheck ? await window.TSGNative.mockLocationCheck() : { ok: false };
   const selfieSmall = await shrinkDataUrl(selfie.dataUrl, 960, 0.8); // rule 9: weak networks
+  // Already low-res (a preview sample, not a full capture) — only shrunk further if it
+  // somehow came in larger than expected, to keep the liveness check cheap on data.
+  const livenessFrameSmall = selfie.livenessFrameDataUrl ? await shrinkDataUrl(selfie.livenessFrameDataUrl, 640, 0.7) : null;
 
   const payload = { type, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, selfieDataUrl: selfieSmall,
+    livenessFrameDataUrl: livenessFrameSmall,
     integrity: integrity.ok ? { mock: !!integrity.mock, legacyMockSetting: !!integrity.legacyMockSetting, fixesChecked: integrity.fixesChecked } : null };
   try {
     const result = await window.Api.punch(payload);
@@ -1379,6 +1469,7 @@ function renderLogoutConfirm() {
 // ---------------- HR: login ----------------
 
 function startHrLogin() {
+  clearSessionData();
   loginState = { step: 'email' };
   renderShell(`
     <div class="card center-card">
@@ -1449,7 +1540,8 @@ async function refreshAdminPermissions() {
 // empty instead of failing the whole screen with a 403.
 function fetchIfAllowed(perm, fetcher) { return hasPerm(perm) ? fetcher() : Promise.resolve([]); }
 
-// ---------------- HR: dashboard ----------------
+// Role dashboards (renderHrDashboard, renderLocationHeadDashboard, renderFinanceDashboard
+// and the per-role screens behind them) live in dashboards.js.
 
 async function loadHrContext() {
   const [workers, locations, vendors, punches, regularisations] = await Promise.all([
@@ -1458,55 +1550,6 @@ async function loadHrContext() {
   ]);
   return { workers, locations, vendors, punches, regularisations };
 }
-
-// BRD §12 dashboard: "Live count of active, punched in, not punched, punched out and
-// blocked. Filters for brand and vendor." Counts come from the server (scoped to the
-// user); Smart Insights / Time Guard still run on the loaded punches.
-function renderHrDashboard() {
-  const s = requireHr(); if (!s) return;
-  const f = window._dashFilters || {};
-  withLoading(() => Promise.all([loadHrContext(), window.Api.dashboard(f), window.Api.reportFilters()]), ([ctx, d, opts]) => {
-    const flags = computeTimeGuardFlags(ctx);
-    const insights = computeSmartInsights({ ...ctx, flags });
-    const sel = (id, label, items, cur) => `<select id="${id}" class="input" style="margin:0" onchange="setDashFilter()"><option value="">${label}</option>${items.map(i => `<option value="${esc(i.id)}" ${i.id === cur ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</select>`;
-    renderShell(`
-      <div class="card">
-        <div class="filter-row">
-          ${sel('df_brand', 'All brands', opts.brands.map(b => ({ id: b, name: b })), f.brand)}
-          ${sel('df_vendor', 'All vendors', opts.vendors, f.vendorId)}
-        </div>
-      </div>
-      <div class="stat-grid">
-        <div class="stat-card"><div class="stat-num">${d.active}</div><div class="stat-label">${t('activeManpower')}</div></div>
-        <div class="stat-card"><div class="stat-num">${d.punchedIn}</div><div class="stat-label">${t('punchedInToday')}</div></div>
-        <div class="stat-card"><div class="stat-num">${d.notPunched}</div><div class="stat-label">${t('notPunched')}</div></div>
-        <div class="stat-card"><div class="stat-num">${d.punchedOut}</div><div class="stat-label">Punched out</div></div>
-        <div class="stat-card warn"><div class="stat-num">${d.blocked}</div><div class="stat-label">Blocked today</div></div>
-        <div class="stat-card ${hasPerm('workers.approve') ? 'action' : ''}" ${hasPerm('workers.approve') ? `onclick="location.hash='#/hr/approvals';render()"` : ''}>
-          <div class="stat-num">${d.pendingApprovals}</div><div class="stat-label">${t('pendingApprovals')}</div>
-        </div>
-      </div>
-      <div class="card">
-        <h3>By location</h3>
-        <table class="tbl">
-          <thead><tr><th>${t('location')}</th><th>${t('activeManpower')}</th><th>${t('punchedInToday')}</th><th>Out</th></tr></thead>
-          <tbody>${d.byLocation.map(l => `<tr><td>${esc(l.location)}</td><td>${l.active}</td><td>${l.punchedIn}</td><td>${l.punchedOut}</td></tr>`).join('')}</tbody>
-        </table>
-      </div>
-      <div class="card insight-card">
-        <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>${t('smartInsights')}</h3>
-        <ul class="insight-list">${insights.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
-        ${insights.byLocation.length ? `<p class="muted small" style="margin-top:12px">${t('punchesByLocationToday')}</p>${barChart(insights.byLocation)}` : ''}
-        <a href="#/hr/timeguard" class="link-btn small" style="display:inline-block;margin-top:8px">${t('viewTimeGuard')} (${flags.length}) →</a>
-      </div>
-    `);
-  });
-}
-function setDashFilter() {
-  window._dashFilters = { brand: fieldVal('df_brand') || undefined, vendorId: fieldVal('df_vendor') || undefined };
-  renderHrDashboard();
-}
-
 // ---- Reports (R16, BRD §16): Excel downloads filtered by date, brand, location, vendor, job ----
 function renderHrReports() {
   const s = requireHr(); if (!s) return;
@@ -1556,7 +1599,7 @@ function renderHrApprovals() {
       <div class="card">
         <h3>${t('pendingApprovals')}</h3>
         <datalist id="mgrEmails">${managers.map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join('')}</datalist>
-        ${pending.length === 0 ? emptyState(t('noData'), 'check') : pending.map(w => `
+        ${pending.length === 0 ? emptyState('All caught up — no registrations waiting for approval.', 'check') : pending.map(w => `
           <div class="approval-row" id="approvalRow_${w.id}">
             <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${w.photo_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
             <div class="approval-info">
@@ -1718,7 +1761,7 @@ function renderHrRequests() {
     renderShell(`
       <div class="card">
         <h3>Transfer & exit requests</h3>
-        ${list.length === 0 ? emptyState(t('noData'), 'doc') : list.map(r => `
+        ${list.length === 0 ? emptyState('No transfer or exit requests yet.', 'doc') : list.map(r => `
           <div class="worker-summary">
             <b>${esc(r.worker_name)}</b> — ${r.type === 'transfer' ? `transfer ${esc(r.from_location || '')} → ${esc(r.to_location || r.from_location || '')}${r.to_vendor ? ` (vendor ${esc(r.to_vendor)})` : ''}` : `exit${r.exit_date ? ' on ' + esc(r.exit_date) : ''}${r.blacklist_suggested ? ' · blacklist suggested' : ''}`}
             <span class="badge ${label[r.status][0]}">${label[r.status][1]}</span>
@@ -1863,7 +1906,7 @@ function filterWorkerList() {
       <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${w.photo_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
       <div class="approval-info">
         <b><a href="javascript:void(0)" onclick="viewWorker('${w.id}')" style="color:inherit">${esc(w.name || w.mobile)}</a></b> ${statusBadge(w.status)} ${w.blacklisted ? '<span class="badge badge-bad">Blacklisted</span>' : ''}<br/>
-        <span class="muted small">${esc(w.mobile)} · ${esc(w.designation || '')}</span>
+        <span class="muted small">${w.name ? esc(w.mobile) + (w.designation ? ' · ' + esc(w.designation) : '') : 'Registration not completed'}</span>
       </div>
     </div>`).join('');
 }
@@ -1876,6 +1919,19 @@ function viewWorker(id) {
   window._viewWorkerId = id;
   location.hash = '#/hr/worker';
   render();
+}
+async function checkAbsenteeismRisk(id) {
+  const el = document.getElementById('absRiskResult');
+  if (!el) return;
+  el.innerHTML = spinnerRow('Reading attendance pattern…');
+  try {
+    const r = await window.Api.absenteeismRisk(id);
+    const color = r.level === 'high' ? 'var(--bad, #b91c1c)' : r.level === 'medium' ? 'var(--warn, #b45309)' : 'var(--accent, #19a974)';
+    el.innerHTML = `<div class="gps-status" style="border-color:${color}">
+      <b style="color:${color};text-transform:uppercase">${esc(r.level)} risk</b> — present ${r.presentDays}/${r.totalDays} days<br/>
+      <span class="small">${esc(r.reason)}</span>
+    </div>`;
+  } catch (e) { el.innerHTML = errorState(e.message); }
 }
 
 function renderHrWorkerDetail() {
@@ -1916,11 +1972,17 @@ function renderHrWorkerDetail() {
         ${hasPerm('workers.manage') ? renderManageWorkerCard(w, locations, vendors) : ''}
         ${renderRequestCard(w, locations, vendors)}
         <div class="card">
+          <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>AI attendance risk</h3>
+          <p class="muted small">Reads this worker's last 30 days for a trend or pattern — not a prediction, just a pattern read. Runs only when you ask, not automatically.</p>
+          <div id="absRiskResult"></div>
+          <button class="btn secondary small" onclick="checkAbsenteeismRisk('${w.id}')">Check now</button>
+        </div>
+        <div class="card">
           <h3>History</h3>
           ${history.length === 0 ? `<p class="muted small">No transfers, exits or other changes yet.</p>` : `
           <table class="tbl">
             <thead><tr><th>${t('date')}</th><th>Change</th><th>${t('reason')}</th><th>By</th></tr></thead>
-            <tbody>${history.map(e => `<tr><td class="small">${new Date(e.ts).toLocaleString()}</td><td>${esc(e.detail)}</td><td>${esc(e.reason || '')}</td><td class="small">${esc(e.by_user || '')}</td></tr>`).join('')}</tbody>
+            <tbody>${history.map(e => `<tr><td class="small">${new Date(e.ts).toLocaleString()}</td><td class="wrap">${esc(e.detail)}</td><td class="wrap">${esc(e.reason || '')}</td><td class="small">${esc(e.by_user || '')}</td></tr>`).join('')}</tbody>
           </table>`}
         </div>
         ${renderDayHistory(w, punches)}
@@ -1941,11 +2003,11 @@ function renderHrWorkerDetail() {
               </div>
               <div class="compare-meta">
                 <span class="badge ${p.type==='in'?'badge-ok':'badge-warn'}">${p.type.toUpperCase()}</span>
-                ${p.result === 'blocked' ? `<span class="badge badge-bad">${esc(p.reason)}</span>` : ''}
+                ${p.result === 'blocked' ? `<span class="badge badge-bad">${esc(reasonLabel(p.reason))}</span>` : ''}
                 <span class="muted small">${new Date(p.ts).toLocaleString()}</span>
                 ${p.distance_m != null ? `<span class="muted small"> · ${p.distance_m}m</span>` : ''}
               </div>
-              ${p.face_match_note ? `<div class="muted small" style="text-align:center;margin-top:4px">${t('aiNote')}: ${esc(p.face_match_note)}</div>` : ''}
+              ${aiNoteHtml(p.face_match_note)}
             </div>
           `).join('')}
         </div>
@@ -1960,6 +2022,7 @@ async function hrRaiseRegularisation(workerId, dateStr) {
   catch (e) { toast(e.message, 'error'); }
 }
 
+const REG_CATEGORY_LABELS = { medical: 'Medical', personal: 'Personal', official_travel: 'Official travel', technical_device: 'Device/network', forgot_punch: 'Forgot to punch', other: 'Other' };
 function renderHrRegularisations() {
   const s = requireHr(); if (!s) return;
   withLoading(
@@ -1970,20 +2033,20 @@ function renderHrRegularisations() {
       renderShell(`
         <div class="card">
           <h3>${t('hrRegularisations')}</h3>
-          ${sorted.length === 0 ? emptyState(t('noData'), 'doc') : `
-          <table class="tbl">
-            <thead><tr><th>${t('worker')}</th><th>${t('date')}</th><th>${t('reason')}</th><th>Maker</th><th>${t('status')}</th><th></th></tr></thead>
-            <tbody>
-              ${sorted.map(r => `<tr>
-                <td><a href="javascript:void(0)" onclick="viewWorker('${r.worker_id}')">${esc(nameById[r.worker_id]||r.worker_id)}</a></td><td>${r.date}</td><td>${esc(r.reason)}</td><td>${esc(r.maker)}</td>
-                <td>${statusBadge(r.status)}</td>
-                <td>${r.status==='pending' ? (hasPerm('regularisations.decide') ? `
-                  <button class="btn primary small" onclick="hrDecideReg('${r.id}','approved')">${t('approve')}</button>
-                  <button class="btn danger small" onclick="hrDecideReg('${r.id}','rejected')">${t('reject')}</button>
-                ` : '') : (r.checker ? `<span class="muted small">by ${esc(r.checker)}</span>` : '')}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>`}
+          ${sorted.length === 0 ? emptyState('No regularisation requests yet.', 'doc') : sorted.map(r => `
+            <div class="approval-row">
+              <div class="approval-info">
+                <b><a href="javascript:void(0)" onclick="viewWorker('${r.worker_id}')" style="color:inherit">${esc(nameById[r.worker_id]||r.worker_id)}</a></b>
+                <span class="muted small"> · ${r.date}</span> ${statusBadge(r.status)}
+                <div style="margin-top:4px">${esc(r.reason)}${r.reason_category ? ` <span class="badge badge-neutral">${esc(REG_CATEGORY_LABELS[r.reason_category] || r.reason_category)}</span>` : ''}</div>
+                ${r.ai_triage_note ? `<div class="muted small" style="margin-top:4px">🧠 ${esc(r.ai_triage_note)}</div>` : ''}
+                <div class="muted small" style="margin-top:4px">Raised by ${esc(r.maker)}${r.checker ? ` · ${r.status} by ${esc(r.checker)}` : ''}</div>
+              </div>
+              ${r.status === 'pending' && hasPerm('regularisations.decide') ? `<div class="approval-actions">
+                <button class="btn primary small" onclick="hrDecideReg('${r.id}','approved')">${t('approve')}</button>
+                <button class="btn danger small" onclick="hrDecideReg('${r.id}','rejected')">${t('reject')}</button>
+              </div>` : ''}
+            </div>`).join('')}
         </div>
       `);
     }
@@ -2009,13 +2072,13 @@ function renderHrExceptions() {
       renderShell(`
         <div class="card">
           <h3>${t('hrExceptions')}</h3>
-          ${sorted.length === 0 ? emptyState(t('noData'), 'warn') : sorted.map(p => `
+          ${sorted.length === 0 ? emptyState('No blocked punches — every attempt passed its checks.', 'shield') : sorted.map(p => `
             <div class="approval-row">
-              ${p.selfie_data_url ? `<img src="${p.selfie_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}
+              ${thumbHtml(p.selfie_data_url)}
               <div class="approval-info">
-                <b>${nameLink(p)}</b> — ${p.type.toUpperCase()} <span class="badge badge-bad">${esc(p.reason)}</span><br/>
-                <span class="muted small">${new Date(p.ts).toLocaleString()} · accuracy ${p.accuracy||'?'}m · distance ${p.distance_m!=null?p.distance_m+'m':'?'}</span>
-                ${p.face_match_note ? `<br/><span class="muted small">${t('aiNote')}: ${esc(p.face_match_note)}</span>` : ''}
+                <b>${nameLink(p)}</b> — ${p.type.toUpperCase()} <span class="badge badge-bad">${esc(reasonLabel(p.reason))}</span><br/>
+                <span class="muted small">${new Date(p.ts).toLocaleString()} · GPS ±${p.accuracy != null ? Math.round(p.accuracy) : '?'}m · ${p.distance_m!=null?p.distance_m+'m from site':''}</span>
+                ${aiNoteHtml(p.face_match_note)}
               </div>
             </div>
           `).join('')}
@@ -2025,7 +2088,7 @@ function renderHrExceptions() {
           <p class="muted small">Punches that were allowed — every check passed — but borderline on something. Worth a glance, not a block.</p>
           ${riskyOnly.length === 0 ? emptyState('Nothing flagged', 'shield') : riskyOnly.map(p => `
             <div class="approval-row">
-              ${p.selfie_data_url ? `<img src="${p.selfie_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}
+              ${thumbHtml(p.selfie_data_url)}
               <div class="approval-info">
                 <b>${nameLink(p)}</b> — ${p.type.toUpperCase()} <span class="badge ${p.risk_score >= 50 ? 'badge-bad' : 'badge-warn'}">risk ${p.risk_score}</span><br/>
                 <span class="muted small">${new Date(p.ts).toLocaleString()} · ${esc(p.risk_reasons || '')}</span>
@@ -2102,7 +2165,7 @@ function renderHrMasters() {
             <tbody>${vendors.map(v => `<tr>
               <td>${esc(v.name)}${v.status === 'inactive' ? ' <span class="badge badge-neutral">Inactive</span>' : ''}</td>
               <td>${esc(v.gstin||'')}</td>
-              <td>${esc(v.contact_person||'')}${v.phone ? `<br/><span class="muted small">${esc(v.phone)}</span>` : ''}</td>
+              <td>${esc(v.contact_person||'')}${v.phone ? `<br/><span class="muted small">${esc(v.phone)}</span>` : ''}${vendorKycBadge(v)}</td>
               <td>${contractCell(v)}</td>
               <td><button class="btn secondary small" onclick="startEditVendor('${v.id}')">Edit</button></td>
             </tr>`).join('')}</tbody>
@@ -2270,6 +2333,7 @@ function contractCell(v) {
 let editingVendor = null; // null = closed; {} = new; {...row} = editing
 function startEditVendor(id) {
   editingVendor = id ? { ...(window._hrVendors || []).find(v => v.id === id) } : {};
+  vendorKyc = {};
   renderHrMasters();
 }
 function renderVendorForm() {
@@ -2287,11 +2351,94 @@ function renderVendorForm() {
       ${v.id ? `<label>${t('status')}</label><select id="nv_status" class="input">
         <option value="active" ${v.status !== 'inactive' ? 'selected' : ''}>Active</option>
         <option value="inactive" ${v.status === 'inactive' ? 'selected' : ''}>Inactive (no new registrations)</option></select>` : ''}
+      ${renderVendorContactKyc(v)}
       <div class="wizard-actions">
         <button class="btn secondary" onclick="startEditVendorCancel()">${t('cancel')}</button>
         <button class="btn primary" onclick="saveVendor()">${t('save')}</button>
       </div>
     </div>`;
+}
+// Contact person's Aadhaar/PAN — Aadhaar is an individual document, so this verifies
+// the vendor's authorized contact, not the company (the company itself is identified
+// by GSTIN/PAN above). Same OCR/QR-scan pattern as worker KYC (regPanPhoto/regScanAadhaar),
+// but captured by HR here instead of self-serve by the person.
+function renderVendorContactKyc(v) {
+  return `
+    <h4 style="margin-top:16px">Contact person KYC (${esc(v.contact_person || 'authorized contact')})</h4>
+    <p class="muted small">Aadhaar + PAN of the vendor's contact person — not the company (Aadhaar only exists for individuals).</p>
+    <div class="kyc-status ${v.contact_aadhaar_qr_at ? 'ok' : ''}">${v.contact_aadhaar_qr_at ? `✅ Aadhaar scanned — ${esc(v.contact_aadhaar_masked || '')}${v.contact_aadhaar_name ? ` · ${esc(v.contact_aadhaar_name)}` : ''}` : '⏳ Aadhaar not scanned yet'}</div>
+    <button class="btn secondary block" onclick="vendorScanAadhaar()">📷 ${v.contact_aadhaar_qr_at ? 'Scan again' : 'Scan Aadhaar QR'}</button>
+    ${vendorKyc.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">Couldn't read the QR — take a clear photo instead: card flat, QR large in the photo, good light, no glare.</div>` : ''}
+    <button class="btn ${vendorKyc.qrHelp ? 'primary' : 'secondary'} block" onclick="vendorPhotoAadhaarQr()">🖼️ Take a photo of the QR instead</button>
+
+    <div class="kyc-status ${v.contact_pan_verified ? 'ok' : ''}" style="margin-top:12px">${v.contact_pan_verified ? '✅ PAN verified' : (v.contact_pan_number ? '⏳ PAN read, not yet verified' : '⏳ PAN not read yet')}</div>
+    ${v.contact_pan_photo_data_url ? `<img src="${esc(v.contact_pan_photo_data_url)}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
+    ${v.contact_pan_number ? `<div class="kyc-status">PAN read from photo: <b>${esc(v.contact_pan_number)}</b>${v.contact_pan_name ? ` · ${esc(v.contact_pan_name)}` : ''}</div>` : ''}
+    ${v.contact_pan_tamper_note ? `<div class="gps-status bad">⚠️ Possible tampering: ${esc(v.contact_pan_tamper_note)}</div>` : ''}
+    <button class="btn secondary block" onclick="vendorPanPhoto()">📷 ${v.contact_pan_photo_data_url ? 'Retake PAN photo' : 'Take photo of PAN card'}</button>
+    ${v.contact_pan_number && !v.contact_pan_verified ? `<button class="btn primary block" onclick="vendorVerifyPan()">Verify this PAN</button>` : ''}`;
+}
+function vendorKycBadge(v) {
+  if (v.contact_pan_tamper_note) return `<br/><span class="small" style="color:var(--warn, #b45309)">⚠️ PAN tamper flag</span>`;
+  const aadhaarOk = !!v.contact_aadhaar_qr_at, panOk = !!v.contact_pan_verified;
+  if (aadhaarOk && panOk) return `<br/><span class="small" style="color:var(--accent, #19a974)">✅ Contact KYC done</span>`;
+  if (aadhaarOk || v.contact_pan_number) return `<br/><span class="small muted">⏳ Contact KYC partial</span>`;
+  return '';
+}
+let vendorKyc = {};
+async function vendorPanPhoto() {
+  const photo = await window.TSGNative.takeDocumentPhoto();
+  if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
+  toast('Reading PAN card…', 'info');
+  try {
+    const r = await window.Api.vendorPanPhoto(await shrinkDataUrl(photo.dataUrl, 1600, 0.85));
+    Object.assign(editingVendor, {
+      contact_pan_photo_data_url: photo.dataUrl, contact_pan_number: r.panNumber, contact_pan_name: r.nameOnCard,
+      contact_pan_tamper_note: r.tamperNote || null, contact_pan_verified: 0,
+    });
+    renderHrMasters();
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function vendorVerifyPan() {
+  try {
+    // vendorId lets the server persist the verified flag straight to the row (only it
+    // can — see readVendor in masters.js); for a brand-new vendor not saved yet, there's
+    // no row to persist to, so this only reflects locally until saved and re-verified.
+    const r = await window.Api.vendorPanVerify(editingVendor.contact_pan_number, editingVendor.contact_aadhaar_name, editingVendor.id);
+    editingVendor.contact_pan_verified = r.verified ? 1 : 0;
+    if (r.fullName) editingVendor.contact_pan_name = r.fullName;
+    toast(r.warning || 'PAN verified', r.warning ? 'error' : 'success');
+    renderHrMasters();
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function vendorScanAadhaar() {
+  const scan = await window.TSGNative.scanQrCode();
+  if (!scan.ok) {
+    vendorKyc.qrHelp = true;
+    if (!scan.cancelled) toast(scan.error, 'error');
+    renderHrMasters();
+    return;
+  }
+  try { vendorAadhaarQrAccepted(await window.Api.vendorAadhaarQr(scan.text)); } catch (e) { toast(e.message, 'error'); }
+}
+async function vendorPhotoAadhaarQr() {
+  const r = await window.TSGNative.scanQrFromPhoto();
+  if (r.cancelled) return;
+  toast('Reading the QR…', 'info');
+  try {
+    if (r.ok) return vendorAadhaarQrAccepted(await window.Api.vendorAadhaarQr(r.text));
+    if (r.dataUrl) return vendorAadhaarQrAccepted(await window.Api.vendorAadhaarQrImage(r.dataUrl));
+    toast(r.error || 'Could not take the photo', 'error');
+  } catch (e) { toast(e.message, 'error'); }
+}
+function vendorAadhaarQrAccepted(result) {
+  vendorKyc.qrHelp = false;
+  Object.assign(editingVendor, {
+    contact_aadhaar_masked: result.maskedNumber, contact_aadhaar_key: result.aadhaarKey, contact_aadhaar_name: result.name,
+    contact_aadhaar_qr_format: result.format, contact_aadhaar_qr_signature: result.signature, contact_aadhaar_qr_at: Date.now(),
+  });
+  toast(result.warning || `Aadhaar scanned (${result.maskedNumber})`, result.warning ? 'error' : 'success');
+  renderHrMasters();
 }
 function startEditVendorCancel() { editingVendor = null; renderHrMasters(); }
 async function saveVendor() {
@@ -2299,6 +2446,14 @@ async function saveVendor() {
   const body = {
     name: val('nv_name'), gstin: val('nv_gstin'), pan: val('nv_pan'), contactPerson: val('nv_contact'), phone: val('nv_phone'),
     contractStart: val('nv_cstart'), contractEnd: val('nv_cend'), status: val('nv_status'),
+    contactPanPhotoDataUrl: editingVendor.contact_pan_photo_data_url, contactPanNumber: editingVendor.contact_pan_number,
+    contactPanName: editingVendor.contact_pan_name, contactPanTamperNote: editingVendor.contact_pan_tamper_note,
+    // contact_pan_verified is deliberately NOT sent — the server never accepts it from
+    // the client (see readVendor in masters.js); it can only be set via a real
+    // /vendor-kyc/pan-verify call, which persists it server-side directly.
+    contactAadhaarMasked: editingVendor.contact_aadhaar_masked, contactAadhaarKey: editingVendor.contact_aadhaar_key,
+    contactAadhaarName: editingVendor.contact_aadhaar_name, contactAadhaarQrFormat: editingVendor.contact_aadhaar_qr_format,
+    contactAadhaarQrSignature: editingVendor.contact_aadhaar_qr_signature, contactAadhaarQrAt: editingVendor.contact_aadhaar_qr_at,
   };
   if (!body.name) { toast('Name required', 'error'); return; }
   try {
@@ -2505,14 +2660,14 @@ function renderHrAssist() {
       <div id="as_otp"></div>
     </div>`);
 }
-async function assistRequestOtp() {
+async function assistRequestOtp(channel) {
   const mobile = fieldVal('as_mobile').trim();
   if (!/^\d{10}$/.test(mobile)) { toast(t('invalidMobile'), 'error'); return; }
   try {
-    const r = await window.Api.assistOtpRequest(mobile);
+    const r = await window.Api.assistOtpRequest(mobile, channel);
     window._assistMobile = mobile;
     document.getElementById('as_otp').innerHTML = `
-      <p class="muted small">${r.devOtp ? `${t('otpHint')}: ${r.devOtp}` : `OTP sent to the worker's mobile ${esc(mobile)}`}</p>
+      ${otpSentLine(r, mobile, "assistRequestOtp('sms')")}
       <label>OTP from the worker's phone</label>
       <input id="as_code" class="input" maxlength="6" inputmode="numeric" />
       <button class="btn primary block" onclick="assistVerifyOtp()">${t('verify')}</button>`;
@@ -2563,7 +2718,7 @@ function renderHrBilling() {
             ? `<button class="btn secondary small" style="margin-top:6px" onclick="billUnlock('${month}')">Unlock</button>`
             : `<button class="btn primary small" style="margin-top:6px" onclick="billLock('${month}')">Lock ${month}</button>`) : ''}
         </div>
-        ${data.rows.length === 0 ? emptyState(t('noData'), 'ledger') : `
+        ${data.rows.length === 0 ? emptyState(`No attendance recorded for ${month} — nothing to bill yet.`, 'ledger') : `
         <table class="tbl">
           <thead><tr><th>${t('vendor')}</th><th>Workers</th><th>System days</th><th>Invoice days</th><th>Gap</th><th></th></tr></thead>
           <tbody>${data.rows.map(r => `<tr>
@@ -2606,7 +2761,8 @@ async function billDetail(vendorId, vendorName) {
     const d = await window.Api.vendorBillWorkers(vendorId, month);
     el.innerHTML = `<h3 style="margin-top:16px">${esc(vendorName)} — day-wise</h3>
       <table class="tbl"><thead><tr><th>${t('worker')}</th><th>Days</th><th>Dates</th></tr></thead>
-      <tbody>${d.rows.map(r => `<tr><td>${esc(r.name)}</td><td>${r.days}</td><td class="small">${esc(r.dates)}</td></tr>`).join('')}</tbody></table>`;
+      <tbody>${d.rows.map(r => `<tr><td>${esc(r.name)}</td><td>${r.days}</td><td class="small wrap">${esc(r.dates)}</td></tr>`).join('')}</tbody></table>`;
+    labelTables(el);
   } catch (e) { el.innerHTML = errorState(e.message); }
 }
 async function billDownload(month) {
@@ -2654,11 +2810,12 @@ async function hrAskSubmit() {
   const question = (inp.value || '').trim();
   if (!question || hrAskBusy) return;
   hrAskBusy = true;
+  const priorTurns = hrAskHistory.filter(h => h.answer).slice(-3);
   const entry = { question };
   hrAskHistory.push(entry);
   renderHrAsk();
   try {
-    const r = await window.Api.askAssistant(question);
+    const r = await window.Api.askAssistant(question, priorTurns);
     entry.answer = r.answer;
   } catch (e) {
     entry.error = e.message;
@@ -2825,10 +2982,11 @@ function renderHrAudit() {
     renderShell(`
       <div class="card">
         <h3>${t('hrAudit')}</h3>
-        <table class="tbl">
-          <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
-          <tbody>${rows.map(a => `<tr><td>${new Date(a.ts).toLocaleString()}</td><td>${esc(a.user)}</td><td>${esc(a.action)}</td><td>${esc(a.detail)}</td></tr>`).join('')}</tbody>
-        </table>
+        ${rows.length === 0 ? emptyState(t('noData'), 'ledger') : rows.map(a => `
+          <div class="log-row">
+            <div class="log-meta"><span class="badge badge-neutral">${esc(String(a.action).replace(/_/g, ' '))}</span><span class="muted small">${new Date(a.ts).toLocaleString()} · ${esc(a.user)}</span></div>
+            ${a.detail ? `<div class="log-detail">${esc(a.detail)}</div>` : ''}
+          </div>`).join('')}
       </div>
     `);
   });
@@ -2896,6 +3054,8 @@ function render() {
     '#/w/menu': renderWorkerMenu,
     '#/w/logout-confirm': renderLogoutConfirm,
     '#/hr/dashboard': renderHrDashboard,
+    '#/hr/location-dashboard': renderLocationHeadDashboard,
+    '#/hr/finance-dashboard': renderFinanceDashboard,
     '#/hr/approvals': renderHrApprovals,
     '#/hr/attendance': renderHrAttendance,
     '#/hr/regularisations': renderHrRegularisations,

@@ -69,7 +69,7 @@ const Api = {
   },
 
   // ---- Auth ----
-  workerOtpRequest: (mobile) => apiFetch('/api/auth/worker/otp/request', { method: 'POST', body: { mobile } }),
+  workerOtpRequest: (mobile, channel) => apiFetch('/api/auth/worker/otp/request', { method: 'POST', body: { mobile, channel } }),
   workerOtpVerify: (mobile, otp) => apiFetch('/api/auth/worker/otp/verify', { method: 'POST', body: { mobile, otp } }),
   hrOtpRequest: (email) => apiFetch('/api/auth/hr/otp/request', { method: 'POST', body: { email } }),
   // devRole only matters on a dev server, for an email logging in for the first time.
@@ -77,7 +77,7 @@ const Api = {
   getAdminMe: () => apiFetch('/api/auth/me'),
   logout: () => apiFetch('/api/auth/logout', { method: 'POST' }),
   // Site HR assisted registration: OTP goes to the worker's mobile.
-  assistOtpRequest: (mobile) => apiFetch('/api/assisted/otp/request', { method: 'POST', body: { mobile } }),
+  assistOtpRequest: (mobile, channel) => apiFetch('/api/assisted/otp/request', { method: 'POST', body: { mobile, channel } }),
   assistOtpVerify: (mobile, otp) => apiFetch('/api/assisted/otp/verify', { method: 'POST', body: { mobile, otp } }),
 
   // ---- Worker profile ----
@@ -91,6 +91,7 @@ const Api = {
   // ---- HR: workers ----
   listWorkers: (status) => apiFetch('/api/workers' + (status ? `?status=${encodeURIComponent(status)}` : '')),
   getWorkerById: (id) => apiFetch('/api/workers/' + id),
+  absenteeismRisk: (id) => apiFetch('/api/workers/' + id + '/absenteeism-risk'),
   approveWorker: (id, manager) => apiFetch(`/api/workers/${id}/approve`, { method: 'POST', body: manager }),
   transferWorker: (id, body) => apiFetch(`/api/workers/${id}/transfer`, { method: 'POST', body }),
   exitWorker: (id, body) => apiFetch(`/api/workers/${id}/exit`, { method: 'POST', body }),
@@ -131,6 +132,13 @@ const Api = {
   listLocations: () => apiFetch('/api/locations'),
   createLocation: (l) => apiFetch('/api/locations', { method: 'POST', body: l }),
   updateLocation: (id, l) => apiFetch(`/api/locations/${id}`, { method: 'PUT', body: l }),
+
+  // ---- Vendor contact-person KYC (Aadhaar/PAN of the authorized contact, captured
+  // by HR while adding/editing a vendor — stateless, same pattern as worker KYC) ----
+  vendorPanPhoto: (photoDataUrl) => apiFetch('/api/vendor-kyc/pan-photo', { method: 'POST', body: { photoDataUrl } }),
+  vendorAadhaarQr: (qrText) => apiFetch('/api/vendor-kyc/aadhaar-qr', { method: 'POST', body: { qrText } }),
+  vendorAadhaarQrImage: (photoDataUrl) => apiFetch('/api/vendor-kyc/aadhaar-qr-image', { method: 'POST', body: { photoDataUrl } }),
+  vendorPanVerify: (pan, aadhaarName, vendorId) => apiFetch('/api/vendor-kyc/pan-verify', { method: 'POST', body: { pan, aadhaarName, vendorId } }),
 
   // ---- Regularisations ----
   myRegularisations: () => apiFetch('/api/regularisations/mine'),
@@ -181,7 +189,7 @@ const Api = {
   kioskPunch: (data) => apiFetch('/api/kiosk/punch', { method: 'POST', body: data }),
 
   // ---- AI assistant ----
-  askAssistant: (question) => apiFetch('/api/assistant/ask', { method: 'POST', body: { question } }),
+  askAssistant: (question, history) => apiFetch('/api/assistant/ask', { method: 'POST', body: { question, history } }),
 
   // ---- Admin users (System Admin) ----
   listAdminRoles: () => apiFetch('/api/admin-users/roles'),
