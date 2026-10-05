@@ -1659,11 +1659,11 @@ function hrApprove(id) {
   // a visible requirement, not an easy-to-skip optional box.
   const faceNote = pw.face_check_status && pw.face_check_status !== 'clear'
     ? `<div class="gps-status warn" style="margin-top:12px">
-         <b>⚠️ ${bi('फोटो खुद मिलाएँ', 'Compare the photos yourself')}</b><br/>
-         <span class="small">${bi('ऑटो फेस-चेक पूरा नहीं हुआ', 'The automatic face check did not finish')}: ${esc(pw.face_check_note || 'not run')}</span><br/>
-         <span class="small">${bi('रजिस्ट्रेशन फोटो को आधार/पैन से मिलाकर नीचे एक लाइन लिखें — इसके बिना अप्रूव नहीं होगा।', 'Compare the registration photo with the Aadhaar/PAN, then write one line below — approval is blocked until you do.')}</span>
+         <b>⚠️ ${esc(biText('फोटो खुद मिलाएँ', 'Compare the photos yourself'))}</b>
+         <div class="small" style="margin-top:6px">${esc(biText('रजिस्ट्रेशन फोटो को आधार/पैन से मिलाकर नीचे एक लाइन लिखें — इसके बिना अप्रूव नहीं होगा।', 'Compare the registration photo with the Aadhaar/PAN, then write one line below — approval is blocked until you do.'))}</div>
+         <div class="small muted" style="margin-top:6px">${esc(biText('ऑटो चेक', 'Auto check'))}: ${esc(pw.face_check_note || 'not run')}</div>
        </div>
-       <label>${bi('आपकी जाँच का नोट', 'Your review note')} <span style="color:var(--bad)">*</span></label>
+       <label>${esc(biText('आपकी जाँच का नोट', 'Your review note'))} <span style="color:var(--bad)">*</span></label>
        <input id="faceNote_${id}" class="input" placeholder="${esc(biText('जैसे: फोटो आधार से मिलती है, वही व्यक्ति है', 'e.g. Photo matches Aadhaar, same person'))}" />` : '';
   form.innerHTML = reportingManagerFields(id, {}) + faceNote + `
     <div class="wizard-actions">
