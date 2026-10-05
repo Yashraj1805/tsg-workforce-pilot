@@ -115,7 +115,9 @@ const Api = {
   aadhaarQrImage: (photoDataUrl) => apiFetch('/api/kyc/aadhaar-qr-image', { method: 'POST', body: { photoDataUrl } }),
   panPhoto: (photoDataUrl) => apiFetch('/api/kyc/pan/photo', { method: 'POST', body: { photoDataUrl } }),
   skipKycDev: () => apiFetch('/api/kyc/skip-dev', { method: 'POST' }),
-  detectFace: (frameDataUrl) => apiFetch('/api/kyc/face-detect', { method: 'POST', body: { frameDataUrl } }),
+  // The face-lock loop (scanFaceForPunch) runs for both a worker's phone and the gate
+  // tablet; each has its own authed route for the same check.
+  detectFace: (frameDataUrl) => apiFetch((getSession() || {}).role === 'kiosk' ? '/api/kiosk/face-detect' : '/api/kyc/face-detect', { method: 'POST', body: { frameDataUrl } }),
 
   // ---- Punches ----
   punch: (data) => apiFetch('/api/punches', { method: 'POST', body: { ...data, deviceId: getDeviceId() } }),
