@@ -86,9 +86,11 @@ const Api = {
   // ---- Auth ----
   workerOtpRequest: (mobile, channel) => apiFetch('/api/auth/worker/otp/request', { method: 'POST', body: { mobile, channel } }),
   workerOtpVerify: (mobile, otp) => apiFetch('/api/auth/worker/otp/verify', { method: 'POST', body: { mobile, otp } }),
-  hrOtpRequest: (email) => apiFetch('/api/auth/hr/otp/request', { method: 'POST', body: { email } }),
-  // devRole only matters on a dev server, for an email logging in for the first time.
-  hrOtpVerify: (email, otp, name, devRole) => apiFetch('/api/auth/hr/otp/verify', { method: 'POST', body: { email, otp, name, devRole } }),
+  // Admin portal: every HR user has their own password (set by a System Admin, changed by the user).
+  hrLogin: (email, password) => apiFetch('/api/auth/hr/login', { method: 'POST', body: { email, password } }),
+  hrChangePassword: (currentPassword, newPassword) => apiFetch('/api/auth/hr/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
+  suggestPassword: () => apiFetch('/api/admin-users/suggest-password'),
+  resetAdminPassword: (id, password) => apiFetch('/api/admin-users/' + id + '/reset-password', { method: 'POST', body: { password } }),
   getAdminMe: () => apiFetch('/api/auth/me'),
   logout: () => apiFetch('/api/auth/logout', { method: 'POST' }),
   // Site HR assisted registration: OTP goes to the worker's mobile.

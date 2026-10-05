@@ -78,6 +78,9 @@ const ICONS = {
   sparkle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M18 6l-2.5 2.5M8.5 15.5L6 18"/></svg>',
   plug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v4M15 3v4M6 7h12l-1 5a5 5 0 01-10 0L6 7z"/><path d="M12 16v5"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.3A10.8 10.8 0 0112 6c6.5 0 10 6 10 6a17 17 0 01-3.2 3.7M6.6 6.6C3.8 8.4 2 12 2 12s3.5 6 10 6c1.4 0 2.7-.3 3.8-.7"/><path d="M9.9 9.9a3 3 0 004.2 4.2"/></svg>',
+  key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M13 10l2 2"/></svg>',
 };
 function icon(name) { return ICONS[name] || ''; }
 
@@ -1511,47 +1514,57 @@ function renderLogoutConfirm() {
 
 // ---------------- HR: login ----------------
 
+// Email + the user's own password. Accounts (and first-time passwords) come from a System
+// Admin on the Users screen — the login form never creates anything.
 function startHrLogin() {
   clearSessionData();
-  loginState = { step: 'email' };
+  loginState = { step: 'password' };
+  const last = localStorage.getItem('tsg_last_hr_email') || '';
   renderShell(`
     <div class="card center-card">
       <h3>${t('hrUser')}</h3>
-      <input id="hrEmail" class="input" placeholder="name@thesachdevgroup.com" />
-      <input id="hrName" class="input" placeholder="Your name" />
-      <button class="btn primary block" onclick="hrRequestOtp()">${t('sendOtp')}</button>
+      <label>Email</label>
+      <input id="hrEmail" class="input" type="email" autocomplete="username" placeholder="name@thesachdevgroup.com" value="${esc(last)}" />
+      <label>${t('password')}</label>
+      <div class="pw-wrap">
+        <input id="hrPassword" class="input" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')hrLogin()" />
+        <button type="button" class="pw-eye" onclick="togglePw('hrPassword', this)" aria-label="Show password">${icon('eye')}</button>
+      </div>
+      <button class="btn primary block" id="hrLoginBtn" onclick="hrLogin()">${t('signIn')}</button>
+      <p class="muted small" style="margin-top:12px">${t('forgotPwHint')}</p>
     </div>
   `);
+  const el = document.getElementById(last ? 'hrPassword' : 'hrEmail'); if (el) el.focus();
 }
-async function hrRequestOtp(resend) {
-  const email = resend ? loginState.email : document.getElementById('hrEmail').value.trim();
-  const name = resend ? loginState.name : document.getElementById('hrName').value.trim();
+function togglePw(id, btn) {
+  const el = document.getElementById(id); if (!el) return;
+  el.type = el.type === 'password' ? 'text' : 'password';
+  btn.innerHTML = icon(el.type === 'password' ? 'eye' : 'eyeOff');
+}
+async function hrLogin() {
+  const email = document.getElementById('hrEmail').value.trim();
+  const password = document.getElementById('hrPassword').value;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Enter a valid email', 'error'); return; }
+  if (!password) { toast(t('password') + '?', 'error'); return; }
+  const btn = document.getElementById('hrLoginBtn'); if (btn) btn.disabled = true;
   try {
-    const result = await window.Api.hrOtpRequest(email);
-    loginState = { step: 'otp', email, name };
-    renderShell(`
-      <div class="card center-card">
-        <h3>${t('enterOtp')}</h3>
-        <p class="muted small">${result.devOtp ? `${t('otpHint')}: ${result.devOtp}` : `OTP sent to ${esc(email)}`}</p>
-        <input id="hrOtp" class="input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" />
-        ${resendOtpButton("hrRequestOtp(true)", result.resendInSeconds)}
-        ${result.devOtp ? `
-          <label>Role (dev server only — used if this email has no account yet)</label>
-          <select id="hrDevRole" class="input">${Object.entries(ROLE_LABELS).map(([id, label]) => `<option value="${id}" ${id === 'central_hr' ? 'selected' : ''}>${label}</option>`).join('')}</select>
-        ` : ''}
-        <button class="btn primary block" onclick="hrVerifyOtp()">${t('verify')}</button>
-      </div>
-    `);
-  } catch (e) { toast(e.message, 'error'); }
+    const result = await window.Api.hrLogin(email, password);
+    localStorage.setItem('tsg_last_hr_email', email);
+    setSessionData({ token: result.token, role: result.hrUser.role, permissions: result.permissions, email: result.hrUser.email, name: result.hrUser.name, mustChangePassword: !!result.mustChangePassword });
+    loginState = {};
+    // A temporary password (set by a System Admin) has to be replaced before anything else.
+    location.hash = result.mustChangePassword ? '#/hr/account' : adminHomeHash(); render();
+    if (result.mustChangePassword) toast(biText('पहले अपना नया पासवर्ड चुनें', 'Choose your own password first'), 'info');
+  } catch (e) { toast(e.message, 'error'); if (btn) btn.disabled = false; }
 }
-async function hrVerifyOtp() {
-  const otp = document.getElementById('hrOtp').value.trim();
-  const devRoleEl = document.getElementById('hrDevRole');
+async function hrChangePassword() {
+  const cur = document.getElementById('cp_current').value, nw = document.getElementById('cp_new').value, again = document.getElementById('cp_again').value;
+  if (!cur || !nw) { toast('Fill in both passwords', 'error'); return; }
+  if (nw !== again) { toast(biText('नए पासवर्ड दोनों बार एक जैसे नहीं हैं', 'New passwords do not match'), 'error'); return; }
   try {
-    const result = await window.Api.hrOtpVerify(loginState.email, otp, loginState.name, devRoleEl ? devRoleEl.value : undefined);
-    setSessionData({ token: result.token, role: result.hrUser.role, permissions: result.permissions, email: result.hrUser.email, name: result.hrUser.name });
-    loginState = {}; // otherwise a stale step:'otp' would hijack the back button deep in the app later
+    await window.Api.hrChangePassword(cur, nw);
+    const s = getSession(); if (s) setSessionData({ ...s, mustChangePassword: false });
+    toast(biText('पासवर्ड बदल गया', 'Password changed'), 'success');
     location.hash = adminHomeHash(); render();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -1561,6 +1574,8 @@ async function hrVerifyOtp() {
 function requireHr() {
   const s = getSession();
   if (!isAdminSession(s)) { location.hash = '#/'; render(); return null; }
+  // A temporary password must be replaced before any other admin screen opens.
+  if (s.mustChangePassword && location.hash !== '#/hr/account' && location.hash !== '#/hr/logout-confirm') { location.hash = '#/hr/account'; render(); return null; }
   if (!canOpenAdminRoute(location.hash)) { location.hash = adminHomeHash(); render(); return null; }
   return s;
 }
@@ -1572,8 +1587,8 @@ async function refreshAdminPermissions() {
   if (!isAdminSession(s)) return;
   try {
     const me = await window.Api.getAdminMe();
-    if (me.hrUser.role !== s.role || JSON.stringify(me.permissions) !== JSON.stringify(s.permissions)) {
-      setSessionData({ ...s, role: me.hrUser.role, permissions: me.permissions });
+    if (me.hrUser.role !== s.role || JSON.stringify(me.permissions) !== JSON.stringify(s.permissions) || !!me.mustChangePassword !== !!s.mustChangePassword) {
+      setSessionData({ ...s, role: me.hrUser.role, permissions: me.permissions, mustChangePassword: !!me.mustChangePassword });
       render();
     }
   } catch (e) { /* offline or signed out — the next API call surfaces it */ }
@@ -3009,17 +3024,42 @@ function renderUserForm(roles, locations, vendors) {
       <div id="au_vendor_wrap"><label>${t('vendor')}</label>
         <select id="au_vendor" class="input"><option value="">—</option>${vendors.map(v => `<option value="${v.id}" ${u.vendor_id === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>
       <p class="muted small" id="au_scope_hint"></p>
-      ${isNew ? '' : `<label>${t('status')}</label>
+      ${isNew ? `
+        <label>Temporary password <span class="muted">(they must change it at first login)</span></label>
+        <div class="pw-wrap">
+          <input id="au_password" class="input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="At least 8 characters, letters + numbers" value="${esc(u.tempPassword || '')}" />
+          <button type="button" class="pw-eye" title="Suggest one" onclick="suggestUserPassword()">${icon('sparkle')}</button>
+        </div>` : `
+        <label>${t('status')}</label>
         <select id="au_status" class="input">
           <option value="active" ${u.status === 'active' ? 'selected' : ''}>Active</option>
           <option value="inactive" ${u.status === 'inactive' ? 'selected' : ''}>Inactive (cannot log in)</option>
-        </select>`}
+        </select>
+        ${u.tempPassword ? `
+          <div class="pw-temp"><div><div class="small muted">New temporary password — share it with ${esc(u.name || u.email)}, they must change it at first login</div><code>${esc(u.tempPassword)}</code></div><button class="btn secondary small" onclick="copyText('${esc(u.tempPassword)}')">Copy</button></div>` : `
+          <button class="btn secondary block" onclick="resetUserPassword('${u.id}')"><span class="nav-icon" style="vertical-align:-3px;margin-right:6px">${icon('key')}</span>Reset password${u.has_password === false ? ' (none set yet)' : ''}</button>`}`}
       <div class="wizard-actions">
         <button class="btn secondary" onclick="editingUser=null;renderHrUsers()">${t('cancel')}</button>
         <button class="btn primary" onclick="saveUser()">${t('save')}</button>
       </div>
     </div>
   `;
+}
+async function suggestUserPassword() {
+  try { const r = await window.Api.suggestPassword(); const el = document.getElementById('au_password'); if (el) el.value = r.password; } catch (e) { toast(e.message, 'error'); }
+}
+async function resetUserPassword(id) {
+  const u = (window._adminUsers || []).find(x => x.id === id) || {};
+  if (!confirm(`Reset the password for ${u.email}? Their old password stops working immediately.`)) return;
+  try {
+    const r = await window.Api.resetAdminPassword(id);
+    editingUser = { ...u, tempPassword: r.password };
+    renderHrUsers();
+    toast('Temporary password set', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+function copyText(text) {
+  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast('Copied', 'success'), () => toast(text, 'info'));
 }
 // Show only the scope picker the selected role actually uses.
 function syncUserScopeFields() {
@@ -3038,10 +3078,15 @@ async function saveUser() {
   const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
   const body = { name: val('au_name'), role: val('au_role'), locationId: val('au_location') || null, vendorId: val('au_vendor') || null, phone: val('au_phone') || null };
   try {
-    if (editingUser.id) await window.Api.updateAdminUser(editingUser.id, { ...body, status: val('au_status') });
-    else await window.Api.createAdminUser({ ...body, email: val('au_email') });
+    if (editingUser.id) {
+      await window.Api.updateAdminUser(editingUser.id, { ...body, status: val('au_status') });
+      editingUser = null;
+    } else {
+      const created = await window.Api.createAdminUser({ ...body, email: val('au_email'), password: val('au_password') });
+      // Keep the form open on the new user so the temporary password stays on screen to share.
+      editingUser = { ...created, tempPassword: val('au_password') };
+    }
     toast('User saved', 'success');
-    editingUser = null;
     renderHrUsers();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -3071,6 +3116,14 @@ function renderHrAccount() {
       <h3>${esc(s.name)}</h3>
       <p class="muted">${esc(s.email)}</p>
       <span class="badge badge-neutral">${esc(ROLE_LABELS[s.role] || s.role)}</span>
+      <details class="pw-change" ${s.mustChangePassword ? 'open' : ''} style="margin:16px 0; text-align:left">
+        <summary>${t('changePassword')}</summary>
+        ${s.mustChangePassword ? `<p class="muted small">${biText('आपको अस्थायी पासवर्ड मिला है — आगे बढ़ने से पहले अपना पासवर्ड चुनें।', 'You were given a temporary password — choose your own before continuing.')}</p>` : ''}
+        <label>${t('currentPassword')}</label><input id="cp_current" class="input" type="password" autocomplete="current-password" />
+        <label>${t('newPassword')}</label><input id="cp_new" class="input" type="password" autocomplete="new-password" placeholder="${biText('कम से कम 8 अक्षर, अक्षर + अंक', 'At least 8 characters, letters + numbers')}" />
+        <label>${t('newPasswordAgain')}</label><input id="cp_again" class="input" type="password" autocomplete="new-password" onkeydown="if(event.key==='Enter')hrChangePassword()" />
+        <button class="btn primary block" onclick="hrChangePassword()">${t('changePassword')}</button>
+      </details>
       <div style="margin:16px 0">
         <label>${t('language')}</label><br/>
         <div class="lang-toggle">

@@ -137,6 +137,25 @@ p { margin: 8px 0; }
 label { font-size: 14px; font-weight: 700; color: var(--text-strong); }
 textarea.input { min-height: 70px; resize: vertical; }
 
+/* Password field with a show/hide eye inside it */
+.pw-wrap { position: relative; }
+.pw-wrap .input { padding-right: 46px; }
+.pw-eye {
+  position: absolute; right: 6px; top: 6px; width: 36px; height: 36px; border: none; background: transparent;
+  color: var(--muted); border-radius: 10px; display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.pw-eye svg { width: 20px; height: 20px; }
+.pw-eye:active { background: var(--primary-tint); }
+.pw-change summary { cursor: pointer; font-weight: 700; color: var(--primary); padding: 8px 0; list-style: none; }
+.pw-change summary::-webkit-details-marker { display: none; }
+.pw-change summary::before { content: '›'; display: inline-block; margin-right: 8px; transition: transform 150ms; }
+.pw-change[open] summary::before { transform: rotate(90deg); }
+.pw-temp {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 14px;
+  padding: 12px 14px; border-radius: var(--radius-sm); background: var(--primary-tint); border: 1.5px dashed var(--primary);
+}
+.pw-temp code { font-size: 18px; font-weight: 800; letter-spacing: 0.08em; color: var(--text-strong); }
+
 .btn {
   border: none; border-radius: 14px; padding: 13px 18px; font-size: 15px; font-weight: 700;
   min-height: 46px; cursor: pointer; margin: 4px 4px 4px 0;
