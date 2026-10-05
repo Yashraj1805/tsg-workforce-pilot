@@ -577,6 +577,13 @@ function bi(hi, en) {
   if (currentLang === 'hi') return `<span class="bi-hi">${hi}</span>`;
   return `<span class="bi-hi">${hi}</span><span class="bi-en">${en}</span>`;
 }
+// Plain-text form of bi() for places that can't take HTML: placeholder/title
+// attributes and toast() messages.
+function biText(hi, en) {
+  if (currentLang === 'en') return en;
+  if (currentLang === 'hi') return hi;
+  return `${hi} / ${en}`;
+}
 function regHeader(n, hi, en) {
   speak(hi, en);
   return `<div class="muted small">${n} / ${REG_STEPS}</div><div class="step-bar"><div style="width:${Math.round(n / REG_STEPS * 100)}%"></div></div><h3>${bi(hi, en)}</h3>`;
@@ -1647,8 +1654,17 @@ function hrApprove(id) {
   const pw = (window._approvalWorkers || []).find(x => x.id === id) || {};
   // BRD §12: approve only when the checks pass; a face check that isn't clean needs HR to
   // compare the photos and say so (the server enforces this).
+  // The automatic duplicate-face check didn't give a clean verdict, so the server will
+  // refuse the approval until HR says they compared the photos themselves — make that
+  // a visible requirement, not an easy-to-skip optional box.
   const faceNote = pw.face_check_status && pw.face_check_status !== 'clear'
-    ? `<label>Face check: ${esc(pw.face_check_note || 'not run')}</label><input id="faceNote_${id}" class="input" placeholder="I compared the registration photo with the documents — note" />` : '';
+    ? `<div class="gps-status warn" style="margin-top:12px">
+         <b>⚠️ ${bi('फोटो खुद मिलाएँ', 'Compare the photos yourself')}</b><br/>
+         <span class="small">${bi('ऑटो फेस-चेक पूरा नहीं हुआ', 'The automatic face check did not finish')}: ${esc(pw.face_check_note || 'not run')}</span><br/>
+         <span class="small">${bi('रजिस्ट्रेशन फोटो को आधार/पैन से मिलाकर नीचे एक लाइन लिखें — इसके बिना अप्रूव नहीं होगा।', 'Compare the registration photo with the Aadhaar/PAN, then write one line below — approval is blocked until you do.')}</span>
+       </div>
+       <label>${bi('आपकी जाँच का नोट', 'Your review note')} <span style="color:var(--bad)">*</span></label>
+       <input id="faceNote_${id}" class="input" placeholder="${esc(biText('जैसे: फोटो आधार से मिलती है, वही व्यक्ति है', 'e.g. Photo matches Aadhaar, same person'))}" />` : '';
   form.innerHTML = reportingManagerFields(id, {}) + faceNote + `
     <div class="wizard-actions">
       <button class="btn secondary small" onclick="document.getElementById('mgrForm_${id}').remove()">${t('cancel')}</button>
@@ -1675,6 +1691,13 @@ function readManagerFields(id) {
 }
 async function hrConfirmApprove(id) {
   const noteEl = document.getElementById('faceNote_' + id);
+  // Same rule the server enforces — but caught here, with the cursor put in the box,
+  // instead of a round trip ending in a long red toast.
+  if (noteEl && !noteEl.value.trim()) {
+    noteEl.focus(); noteEl.scrollIntoView({ block: 'center' });
+    toast(biText('पहले फोटो मिलाकर नोट लिखें', 'Compare the photos and write a note first'), 'error');
+    return;
+  }
   try { await window.Api.approveWorker(id, { ...readManagerFields(id), faceReviewNote: noteEl ? noteEl.value.trim() : undefined }); toast('Approved', 'success'); renderHrApprovals(); }
   catch (e) { toast(e.message, 'error'); }
 }
