@@ -7,8 +7,12 @@ const API_BASE_KEY = 'tsg_api_base';
 const SESSION_KEY = 'tsg_session';
 const DEVICE_ID_KEY = 'tsg_device_id';
 
+// The cloud backend is the default, so a freshly installed app works without anyone
+// typing a URL. Server settings can still override it (e.g. a laptop on the same
+// Wi-Fi during development) — that override is what's stored in localStorage.
+const DEFAULT_API_BASE = 'https://tsg-workforce-backend-production.up.railway.app';
 function getApiBase() {
-  return (localStorage.getItem(API_BASE_KEY) || '').replace(/\/$/, '');
+  return (localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE).replace(/\/$/, '');
 }
 function setApiBase(url) {
   localStorage.setItem(API_BASE_KEY, (url || '').trim().replace(/\/$/, ''));
