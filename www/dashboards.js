@@ -91,6 +91,20 @@ function dashAttention(blocked, risky) {
     </div>`;
 }
 const pctOf = (d) => d.active ? Math.round(100 * d.punchedIn / d.active) : 0;
+// Grouped rows (byLocation / byVendor from the dashboard API) as name + progress bar.
+function dashBreakdown(title, rows, key, emptyText, emptyIcon, moreHref) {
+  const sorted = [...rows].sort((a, b) => b.active - a.active);
+  return `
+    <div class="card">
+      <h3>${title}</h3>
+      ${sorted.length === 0 ? emptyState(emptyText, emptyIcon) : sorted.map(r => {
+        const p = r.active ? Math.round(100 * r.punchedIn / r.active) : 0;
+        return `<div class="dash-loc"><div class="dash-loc-head"><b>${esc(r[key])}</b><span class="muted small">${r.punchedIn}/${r.active} in · ${r.punchedOut} out</span></div>
+          <div class="bar-track"><div class="bar-fill ${p < 50 ? 'bad' : p < 80 ? 'warn' : ''}" style="width:${p}%"></div></div></div>`;
+      }).join('')}
+      ${moreHref && sorted.length ? `<a href="${moreHref}" class="link-btn small" style="display:inline-block;margin-top:8px">See workers by vendor →</a>` : ''}
+    </div>`;
+}
 
 // ---- Central HR: the whole company ----
 function renderCentralHrDashboard() {
@@ -113,14 +127,8 @@ function renderCentralHrDashboard() {
           { value: todayBlocked, label: 'Blocked', href: '#/hr/exceptions' },
           { value: pendingRegs, label: 'Regularise', href: '#/hr/regularisations' }, { value: pendingReqs, label: 'Requests', href: '#/hr/requests' },
         ])}
-        <div class="card">
-          <h3>By location</h3>
-          ${d.byLocation.length === 0 ? emptyState('No locations yet.', 'building') : d.byLocation.map(l => {
-            const p = l.active ? Math.round(100 * l.punchedIn / l.active) : 0;
-            return `<div class="dash-loc"><div class="dash-loc-head"><b>${esc(l.location)}</b><span class="muted small">${l.punchedIn}/${l.active} in · ${l.punchedOut} out</span></div>
-              <div class="bar-track"><div class="bar-fill ${p < 50 ? 'bad' : p < 80 ? 'warn' : ''}" style="width:${p}%"></div></div></div>`;
-          }).join('')}
-        </div>
+        ${dashBreakdown('By location', d.byLocation, 'location', 'No locations yet.', 'building')}
+        ${dashBreakdown('By vendor / agency', d.byVendor || [], 'vendor', 'No vendors yet.', 'building', '#/hr/workers')}
         ${dashAttention(blocked, risky)}
         <div class="card insight-card">
           <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>${t('smartInsights')}</h3>
@@ -185,7 +193,7 @@ function renderVendorDashboard() {
       ${dashHero({ title: 'My workers today', pct: pctOf(d) })}
       ${dashTiles([
         { icon: 'warn', value: d.notPunched, label: 'Not punched in', tone: d.notPunched ? 'warn' : 'ok' },
-        { icon: 'ledger', value: mine ? mine.systemDays : '—', label: `System days · ${month}`, tone: 'primary', href: '#/hr/billing' },
+        { icon: 'ledger', value: mine ? mine.systemDays : 0, label: `System days · ${month}`, tone: 'primary', href: '#/hr/billing' },
       ])}
       ${dashRow([{ value: d.active, label: 'Active' }, { value: d.punchedIn, label: 'In' }, { value: d.punchedOut, label: 'Out' }, { value: d.blocked, label: 'Blocked', href: '#/hr/exceptions' }])}
       ${mine ? `<div class="card"><h3>Bill status · ${month}</h3>

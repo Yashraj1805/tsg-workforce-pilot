@@ -1889,9 +1889,16 @@ function renderHrWorkers() {
       <div class="card">
         <h3>Workers</h3>
         <input id="wk_search" class="input" placeholder="Search name or mobile" oninput="filterWorkerList()" />
-        <select id="wk_status" class="input" onchange="filterWorkerList()">
-          ${['', 'approved', 'pending', 'sent_back', 'draft', 'exited', 'rejected'].map(st => `<option value="${st}">${st ? st.replace('_', ' ') : 'All statuses'}</option>`).join('')}
-        </select>
+        <div class="filter-row">
+          <select id="wk_status" class="input" onchange="filterWorkerList()">
+            ${['', 'approved', 'pending', 'sent_back', 'draft', 'exited', 'rejected'].map(st => `<option value="${st}">${st ? st.replace('_', ' ') : 'All statuses'}</option>`).join('')}
+          </select>
+          <select id="wk_vendor" class="input" onchange="filterWorkerList()">
+            <option value="">All vendors</option>
+            ${[...new Set((window._allWorkers || []).map(w => w.vendor_name).filter(Boolean))].sort().map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('')}
+          </select>
+        </div>
+        <div id="wk_count" class="muted small" style="margin:-6px 0 8px"></div>
         <div id="wk_list"></div>
       </div>`);
     filterWorkerList();
@@ -1899,14 +1906,17 @@ function renderHrWorkers() {
 }
 function filterWorkerList() {
   const q = fieldVal('wk_search').trim().toLowerCase();
-  const st = fieldVal('wk_status');
-  const rows = (window._allWorkers || []).filter(w => (!st || w.status === st) && (!q || (w.name || '').toLowerCase().includes(q) || (w.mobile || '').includes(q)));
-  document.getElementById('wk_list').innerHTML = rows.length === 0 ? emptyState(t('noData'), 'user') : rows.map(w => `
+  const st = fieldVal('wk_status'), ven = fieldVal('wk_vendor');
+  const rows = (window._allWorkers || []).filter(w => (!st || w.status === st) && (!ven || w.vendor_name === ven) && (!q || (w.name || '').toLowerCase().includes(q) || (w.mobile || '').includes(q)));
+  const countEl = document.getElementById('wk_count');
+  if (countEl) countEl.textContent = `${rows.length} worker${rows.length === 1 ? '' : 's'}${ven ? ` from ${ven}` : ''}`;
+  document.getElementById('wk_list').innerHTML = rows.length === 0 ? emptyState('No workers match these filters.', 'user') : rows.map(w => `
     <div class="approval-row">
-      <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${w.photo_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
+      <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${thumbHtml(w.photo_data_url)}</a>
       <div class="approval-info">
         <b><a href="javascript:void(0)" onclick="viewWorker('${w.id}')" style="color:inherit">${esc(w.name || w.mobile)}</a></b> ${statusBadge(w.status)} ${w.blacklisted ? '<span class="badge badge-bad">Blacklisted</span>' : ''}<br/>
         <span class="muted small">${w.name ? esc(w.mobile) + (w.designation ? ' · ' + esc(w.designation) : '') : 'Registration not completed'}</span>
+        ${w.vendor_name || w.location_name ? `<br/><span class="small"><span class="icon-inline">${icon('building')}</span>${esc(w.vendor_name || 'No vendor')}${w.location_name ? ` <span class="muted">· ${esc(w.location_name)}</span>` : ''}</span>` : ''}
       </div>
     </div>`).join('');
 }
