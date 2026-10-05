@@ -680,12 +680,12 @@ function regAadhaar() {
       ${regHeader(3, 'आधार कार्ड', 'Aadhaar card')}
       ${w.aadhaar_qr_at
         ? `<div class="kyc-status ok">✅ ${bi('आधार स्कैन हो गया', 'Aadhaar scanned')} — ${esc(w.aadhaar_masked || '')}</div>`
-        : `<p class="muted small">${bi('आधार कार्ड पर बने QR कोड को स्कैन करें — आपकी जानकारी अपने-आप भर जाएगी।', 'Scan the QR code on the Aadhaar card — your details fill in by themselves.')}</p>`}
+        : `<p class="muted small">${bi('आधार कार्ड के QR की <b>फोटो लें</b> — आपकी जानकारी अपने-आप भर जाएगी। कार्ड सीधा रखें, QR फोटो में बड़ा दिखे, रोशनी अच्छी हो।', 'Take a <b>photo</b> of the QR on the Aadhaar card — your details fill in by themselves. Card flat, QR large in the photo, good light.')}</p>`}
       ${regState.aadhaarNameWarning ? `<div class="gps-status bad">Name on Aadhaar is "${esc(regState.aadhaarNameWarning)}" — your name below must match it.
         <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">Use Aadhaar name</button></div>` : ''}
-      <button class="btn ${w.aadhaar_qr_at ? 'secondary' : 'primary'} block big" onclick="regScanAadhaar()">📷 ${w.aadhaar_qr_at ? bi('फिर से स्कैन करें', 'Scan again') : bi('आधार QR स्कैन करें', 'Scan Aadhaar QR')}</button>
-      ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('QR नहीं पढ़ा गया। आधार का QR बहुत घना होता है — उसकी साफ़ फोटो लें: कार्ड सीधा रखें, QR फोटो में बड़ा दिखे, रोशनी अच्छी हो, चमक न हो।', "Couldn't read the QR. The Aadhaar QR is very dense — take a clear photo of it instead: card flat, QR large in the photo, good light, no glare.")}</div>` : ''}
-      <button class="btn ${regState.qrHelp ? 'primary' : 'secondary'} block" onclick="regPhotoAadhaarQr()">🖼️ ${bi('QR की फोटो लें', 'Take a photo of the QR instead')}</button>
+      ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('लाइव स्कैनर QR नहीं पढ़ पाया (आधार का QR बहुत घना होता है)। नीचे वाले बटन से उसकी फोटो लें — वह काम करता है।', "The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button below — that one works.")}</div>` : ''}
+      <button class="btn primary block big" onclick="regPhotoAadhaarQr()">📷 ${w.aadhaar_qr_at ? bi('फिर से फोटो लें', 'Take the photo again') : bi('आधार QR की फोटो लें', 'Take a photo of the Aadhaar QR')}</button>
+      <button class="btn secondary block" onclick="regScanAadhaar()">${bi('लाइव स्कैनर आज़माएँ', 'Try the live scanner instead')}</button>
       ${w.aadhaar_qr_at ? `
         <div class="kyc-status ${w.aadhaar_verified ? 'ok' : ''}" style="margin-top:14px">${w.aadhaar_verified ? '✅ ' + bi('OTP से पुष्टि हो गई', 'Verified with OTP') : '⏳ ' + bi('अब OTP से पुष्टि करें', 'Now verify with OTP')}</div>
         ${!w.aadhaar_verified ? `<button class="btn primary block" onclick="startDigilocker()">🔐 ${bi('आधार OTP से पुष्टि करें', 'Verify Aadhaar with OTP')}</button>
@@ -2377,9 +2377,9 @@ function renderVendorContactKyc(v) {
     <h4 style="margin-top:16px">Contact person KYC (${esc(v.contact_person || 'authorized contact')})</h4>
     <p class="muted small">Aadhaar + PAN of the vendor's contact person — not the company (Aadhaar only exists for individuals).</p>
     <div class="kyc-status ${v.contact_aadhaar_qr_at ? 'ok' : ''}">${v.contact_aadhaar_qr_at ? `✅ Aadhaar scanned — ${esc(v.contact_aadhaar_masked || '')}${v.contact_aadhaar_name ? ` · ${esc(v.contact_aadhaar_name)}` : ''}` : '⏳ Aadhaar not scanned yet'}</div>
-    <button class="btn secondary block" onclick="vendorScanAadhaar()">📷 ${v.contact_aadhaar_qr_at ? 'Scan again' : 'Scan Aadhaar QR'}</button>
-    ${vendorKyc.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">Couldn't read the QR — take a clear photo instead: card flat, QR large in the photo, good light, no glare.</div>` : ''}
-    <button class="btn ${vendorKyc.qrHelp ? 'primary' : 'secondary'} block" onclick="vendorPhotoAadhaarQr()">🖼️ Take a photo of the QR instead</button>
+    ${vendorKyc.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button — that one works.</div>` : ''}
+    <button class="btn secondary block" onclick="vendorPhotoAadhaarQr()">📷 ${v.contact_aadhaar_qr_at ? 'Take the photo again' : 'Take a photo of the Aadhaar QR'}</button>
+    <button class="link-btn small" onclick="vendorScanAadhaar()">Try the live scanner instead</button>
 
     <div class="kyc-status ${v.contact_pan_verified ? 'ok' : ''}" style="margin-top:12px">${v.contact_pan_verified ? '✅ PAN verified' : (v.contact_pan_number ? '⏳ PAN read, not yet verified' : '⏳ PAN not read yet')}</div>
     ${v.contact_pan_photo_data_url ? `<img src="${esc(v.contact_pan_photo_data_url)}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
