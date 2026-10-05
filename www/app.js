@@ -77,6 +77,7 @@ const ICONS = {
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.5-8 9-4.6-1.5-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg>',
   sparkle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M18 6l-2.5 2.5M8.5 15.5L6 18"/></svg>',
   plug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v4M15 3v4M6 7h12l-1 5a5 5 0 01-10 0L6 7z"/><path d="M12 16v5"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
 };
 function icon(name) { return ICONS[name] || ''; }
 
@@ -355,11 +356,12 @@ function hasPerm(p) { const s = getSession(); return !!(s && s.permissions && s.
 // first three a role can open (among `nav: true`) become its bottom-nav tabs, the rest
 // go under "More".
 const ADMIN_SCREENS = [
-  // Security's first tab: "Security at the gate checks the portal" (proposal).
-  { hash: '#/hr/gate', icon: 'shield', label: () => 'Gate check', perms: ['workers.gatecheck'], nav: true, onlyWithout: 'workers.read' },
   // Role-tailored home screens — these replace the generic dashboard (below) for the
-  // one role each is built for, so that role never sees two dashboard tabs.
+  // one role each is built for, so that role never sees two dashboard tabs. Order matters:
+  // adminHomeHash() lands on the FIRST visible entry, so a role's home must come first.
   { hash: '#/hr/dashboard', icon: 'shield', label: () => 'Gate', perms: ['punches.read'], nav: true, onlyRole: ['security'] },
+  // Security's lookup tab: "Security at the gate checks the portal" (proposal).
+  { hash: '#/hr/gate', icon: 'search', label: () => 'Gate check', perms: ['workers.gatecheck'], nav: true, onlyWithout: 'workers.read' },
   { hash: '#/hr/dashboard', icon: 'chart', label: () => 'Setup', perms: ['masters.write'], nav: true, onlyRole: ['system_admin'] },
   { hash: '#/hr/location-dashboard', icon: 'chart', label: () => 'My location', perms: ['workers.read', 'punches.read'], nav: true, onlyRole: ['location_head'] },
   { hash: '#/hr/finance-dashboard', icon: 'chart', label: () => 'Finance overview', perms: ['billing.read'], nav: true, onlyRole: ['mis_finance'] },
@@ -398,8 +400,11 @@ function screenVisible(x) {
   return true;
 }
 function canOpenAdminRoute(hash) {
-  const screen = ADMIN_SCREENS.find(x => x.hash === hash);
-  if (screen) return screenVisible(screen);
+  // Several ADMIN_SCREENS entries can share a hash (one per role's tailored home), so
+  // the route is open if ANY of them is visible — .find() on the first one alone sent
+  // every HR role into a redirect loop the moment a second '#/hr/dashboard' entry existed.
+  const screens = ADMIN_SCREENS.filter(x => x.hash === hash);
+  if (screens.length) return screens.some(screenVisible);
   const perms = ADMIN_ROUTE_PERMS[hash];
   return !!perms && perms.every(hasPerm);
 }

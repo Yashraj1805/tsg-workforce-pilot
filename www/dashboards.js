@@ -55,7 +55,7 @@ function dashPeople(rows, { title, emptyText, limit = 6, showAll } = {}) {
   const sorted = [...rows].sort((a, b) => (order[a.st.status] ?? 9) - (order[b.st.status] ?? 9) || (a.w.name || '').localeCompare(b.w.name || ''));
   const shown = sorted.slice(0, limit);
   const dot = { present: 'ok', half_day: 'warn', missed_punch_out: 'warn', absent: 'bad' };
-  const line = (st) => st.status === 'absent' ? 'Not punched in' : st.status === 'missed_punch_out' ? `In ${st.inTime} · no punch-out` : `In ${st.inTime}${st.outTime ? ` · Out ${st.outTime}` : ''}`;
+  const line = (st) => st.status === 'absent' ? 'Not punched in' : st.status === 'missed_punch_out' ? `In ${fmtTime(st.inTime)} · no punch-out` : `In ${fmtTime(st.inTime)}${st.outTime ? ` · Out ${fmtTime(st.outTime)}` : ''}`;
   return `
     <div class="card">
       <h3>${title}</h3>
@@ -200,7 +200,7 @@ function renderManagerDashboard() {
           <div class="dash-person" onclick="viewWorker('${w.id}')">
             ${w.photo_data_url ? `<img src="${esc(w.photo_data_url)}" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`}
             <div class="dash-person-text"><b>${esc(w.name || w.mobile)}</b><span class="muted small">${esc(w.designation || '')}${w.vendor_name ? ' · ' + esc(w.vendor_name) : ''}</span></div>
-            <span class="dash-person-status small">${st.inTime ? 'In ' + st.inTime : ''}${st.outTime ? ' · Out ' + st.outTime : ''}</span>
+            <span class="dash-person-status small">${st.inTime ? 'In ' + fmtTime(st.inTime) : ''}${st.outTime ? ' · Out ' + fmtTime(st.outTime) : ''}</span>
           </div>`).join('')}
       </div>`;
     renderShell(`
