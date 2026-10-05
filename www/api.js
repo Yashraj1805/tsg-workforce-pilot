@@ -28,8 +28,19 @@ function getDeviceId() {
 function getSession() {
   try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { return null; }
 }
-function setSessionData(s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
+function setSessionData(s) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  // One APK serves three kinds of device. The first sign-in fixes what this device is
+  // for, so a worker's phone never shows the HR door again, an HR phone never shows the
+  // worker door, and a paired gate tablet shows nothing but the keypad. Logging out
+  // keeps the mode (the login screen for that mode comes straight up); only the hidden
+  // "switch mode" gesture (app.js) clears it.
+  if (s && s.role && !s.assisted) setAppMode(s.role === 'kiosk' ? 'kiosk' : s.role === 'worker' ? 'worker' : 'hr');
+}
 function clearSessionData() { localStorage.removeItem(SESSION_KEY); }
+const APP_MODE_KEY = 'tsg_app_mode';
+function getAppMode() { return localStorage.getItem(APP_MODE_KEY) || ''; } // '' | 'worker' | 'hr' | 'kiosk'
+function setAppMode(m) { if (m) localStorage.setItem(APP_MODE_KEY, m); else localStorage.removeItem(APP_MODE_KEY); }
 
 class ApiError extends Error {
   constructor(message, status, data) { super(message); this.status = status; this.data = data; }

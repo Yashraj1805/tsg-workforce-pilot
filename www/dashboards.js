@@ -139,117 +139,235 @@ function renderCentralHrDashboard() {
     });
 }
 
-// ---- Site HR: one site, and the two things they do all day (register, regularise) ----
+// ---- Site HR (BRD: registers workers in person, raises missed-punch requests,
+// gate check; cannot approve). Their day is a task list, so the home is one. ----
 function renderSiteHrDashboard() {
   const s = requireHr(); if (!s) return;
-  withLoading(() => Promise.all([window.Api.dashboard({}), dashPeopleRows(), window.Api.listPunches({ result: 'blocked' }), window.Api.listPunches({ minRisk: 20 }), fetchIfAllowed('regularisations.read', () => window.Api.listRegularisations())]),
-    ([d, people, blocked, risky, regs]) => {
+  withLoading(() => Promise.all([window.Api.dashboard({}), dashPeopleRows(), window.Api.listWorkers(), fetchIfAllowed('regularisations.read', () => window.Api.listRegularisations()), fetchIfAllowed('requests.view', () => window.Api.listWorkerRequests())]),
+    ([d, people, allWorkers, regs, requests]) => {
       const site = d.byLocation[0] ? d.byLocation[0].location : 'My site';
-      const pendingRegs = regs.filter(r => r.status === 'pending').length;
       const notIn = people.filter(r => r.st.status === 'absent');
+      const missedOut = people.filter(r => r.st.status === 'missed_punch_out');
+      const unfinished = allWorkers.filter(w => w.status === 'draft' || w.status === 'sent_back');
+      const awaitingCentral = allWorkers.filter(w => w.status === 'pending');
+      const regsPending = regs.filter(r => r.status === 'pending');
+      const transfersIn = requests.filter(r => r.type === 'transfer' && r.status === 'pending');
+      const tasks = [
+        dashTask(missedOut.length, 'calendar', 'Punched in, not out', 'Raise a missed-punch request before day end', '#/hr/attendance', 'warn'),
+        dashTask(unfinished.length, 'user', 'Registrations not finished', 'Drafts and sent-back — call the worker in', '#/hr/workers', 'warn'),
+        dashTask(regsPending.length, 'doc', 'Regularisations with Central HR', 'Raised, not yet decided', '#/hr/regularisations', ''),
+        dashTask(transfersIn.length, 'inbox', 'Transfers to accept at this site', 'Worker moving here from another site', '#/hr/requests', 'primary'),
+        dashTask(awaitingCentral.length, 'check', 'Sent to Central HR for approval', 'Nothing to do — waiting', '#/hr/approvals', ''),
+      ].join('');
       renderShell(`
         ${dashHero({ title: esc(site), pct: pctOf(d) })}
         ${dashActions([
           hasPerm('workers.register_assisted') && { icon: 'user', label: 'Register worker', onclick: "location.hash='#/hr/assist';render()" },
-          { icon: 'calendar', label: 'Attendance register', onclick: "location.hash='#/hr/attendance';render()" },
           { icon: 'shield', label: 'Gate check', onclick: "location.hash='#/hr/gate';render()" },
+          { icon: 'calendar', label: 'Attendance', onclick: "location.hash='#/hr/attendance';render()" },
         ])}
-        ${dashTiles([
-          { icon: 'warn', value: notIn.length, label: 'Not punched in yet', tone: notIn.length ? 'warn' : 'ok', href: '#/hr/attendance' },
-          { icon: 'doc', value: pendingRegs, label: 'Regularisations pending', tone: pendingRegs ? 'primary' : '', href: '#/hr/regularisations' },
-        ])}
-        ${dashRow([{ value: d.active, label: 'Active' }, { value: d.punchedIn, label: 'In' }, { value: d.punchedOut, label: 'Out' }, { value: d.blocked, label: 'Blocked', href: '#/hr/exceptions' }])}
-        ${dashPeople(notIn, { title: 'Not punched in yet', emptyText: 'Everyone has punched in.', showAll: '#/hr/attendance' })}
-        ${dashAttention(blocked, risky)}
+        ${dashRow([{ value: d.active, label: 'On site' }, { value: d.punchedIn, label: 'In' }, { value: d.punchedOut, label: 'Out' }, { value: notIn.length, label: 'Not yet in', href: '#/hr/attendance' }, { value: d.blocked, label: 'Blocked', href: '#/hr/exceptions' }])}
+        <div class="card">
+          <h3>To do today</h3>
+          ${tasks || emptyState('Nothing waiting on you — all caught up.', 'check')}
+        </div>
+        ${dashPeople(notIn, { title: 'Not punched in yet', emptyText: 'Everyone on site has punched in.', showAll: '#/hr/attendance' })}
       `);
     });
 }
+function dashTask(n, iconName, label, sub, href, tone) {
+  return n ? `
+    <div class="dash-task ${tone || ''}" onclick="location.hash='${href}';render()">
+      <span class="dash-task-icon">${icon(iconName)}</span>
+      <div class="dash-task-text"><b>${label}</b><span class="muted small">${sub}</span></div>
+      <span class="dash-task-count">${n}</span>
+    </div>` : '';
+}
 
-// ---- Reporting Manager: my team, by name ----
+// ---- Reporting Manager (BRD: sees own team; raises transfer/exit; gets the 10:30
+// "my team today" email). The home IS that email, live, by name. ----
 function renderManagerDashboard() {
   const s = requireHr(); if (!s) return;
-  withLoading(() => Promise.all([window.Api.dashboard({}), dashPeopleRows()]), ([d, people]) => {
-    const missedOut = people.filter(r => r.st.status === 'missed_punch_out').length;
+  withLoading(() => Promise.all([window.Api.dashboard({}), dashPeopleRows(), fetchIfAllowed('requests.view', () => window.Api.listWorkerRequests())]), ([d, people, requests]) => {
+    const present = people.filter(r => r.st.status === 'present' || r.st.status === 'half_day');
+    const stillIn = people.filter(r => r.st.status === 'missed_punch_out');
+    const absent = people.filter(r => r.st.status === 'absent');
+    const myReqs = requests.filter(r => r.status === 'pending' || r.status === 'accepted');
+    const list = (title, rows, tone, empty) => `
+      <div class="card">
+        <div class="dash-loc-head"><h3 style="margin:0">${title}</h3><span class="badge ${tone}">${rows.length}</span></div>
+        ${rows.length === 0 ? `<p class="muted small" style="margin:8px 0 0">${empty}</p>` : rows.map(({ w, st }) => `
+          <div class="dash-person" onclick="viewWorker('${w.id}')">
+            ${w.photo_data_url ? `<img src="${esc(w.photo_data_url)}" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`}
+            <div class="dash-person-text"><b>${esc(w.name || w.mobile)}</b><span class="muted small">${esc(w.designation || '')}${w.vendor_name ? ' · ' + esc(w.vendor_name) : ''}</span></div>
+            <span class="dash-person-status small">${st.inTime ? 'In ' + st.inTime : ''}${st.outTime ? ' · Out ' + st.outTime : ''}</span>
+          </div>`).join('')}
+      </div>`;
     renderShell(`
-      ${dashHero({ title: 'My team today', pct: pctOf(d) })}
-      ${dashTiles([
-        { icon: 'warn', value: d.notPunched, label: 'Not punched in', tone: d.notPunched ? 'warn' : 'ok' },
-        { icon: 'calendar', value: missedOut, label: 'Missed punch-out', tone: missedOut ? 'warn' : '' },
+      ${dashHero({ title: 'My team today', pct: pctOf(d), subtitle: `${present.length} present · ${absent.length} not in · ${stillIn.length} still in` })}
+      ${list('Not punched in', absent, absent.length ? 'badge-bad' : 'badge-ok', 'Everyone has reported.')}
+      ${list('Still on site (no punch-out)', stillIn, stillIn.length ? 'badge-warn' : 'badge-ok', 'Nobody is still inside.')}
+      ${list('Present', present, 'badge-ok', 'Nobody has punched in yet.')}
+      ${dashActions([
+        { icon: 'doc', label: 'Request transfer / exit', onclick: "location.hash='#/hr/requests';render()" },
+        { icon: 'calendar', label: 'Past days', onclick: "location.hash='#/hr/attendance';render()" },
+        { icon: 'doc', label: 'Excel', onclick: "location.hash='#/hr/reports';render()" },
       ])}
-      ${dashRow([{ value: d.active, label: 'In my team' }, { value: d.punchedIn, label: 'In' }, { value: d.punchedOut, label: 'Out' }])}
-      ${dashPeople(people, { title: 'Everyone', limit: 50 })}
-      ${dashActions([{ icon: 'doc', label: 'Transfer / exit request', onclick: "location.hash='#/hr/requests';render()" }, { icon: 'doc', label: 'Excel report', onclick: "location.hash='#/hr/reports';render()" }])}
+      ${myReqs.length ? `<div class="card"><h3>My open requests</h3>${myReqs.map(r => `<div class="dash-kv"><span>${esc(r.worker_name)} — ${r.type}</span><span class="badge badge-warn">${r.status === 'accepted' ? 'with Central HR' : 'pending'}</span></div>`).join('')}</div>` : ''}
     `);
   });
 }
 
-// ---- Vendor Coordinator: my workers + what I'll be paid for ----
+// ---- Vendor Coordinator (BRD: sees own vendor's workers and own bill; cannot change
+// anything). A supplier portal: what am I owed, and are my people turning up. ----
 function renderVendorDashboard() {
   const s = requireHr(); if (!s) return;
   const month = lastMonthStr();
-  withLoading(() => Promise.all([window.Api.dashboard({}), dashPeopleRows(), fetchIfAllowed('billing.read', () => window.Api.vendorBill(month))]), ([d, people, bill]) => {
+  withLoading(() => Promise.all([window.Api.dashboard({}), dashPeopleRows(), fetchIfAllowed('billing.read', () => window.Api.vendorBill(month)), window.Api.listWorkers()]), ([d, people, bill, allWorkers]) => {
     const mine = bill && bill.rows ? bill.rows[0] : null;
+    const pendingReg = allWorkers.filter(w => w.status === 'pending' || w.status === 'draft' || w.status === 'sent_back').length;
+    const absent = people.filter(r => r.st.status === 'absent');
     renderShell(`
-      ${dashHero({ title: 'My workers today', pct: pctOf(d) })}
-      ${dashTiles([
-        { icon: 'warn', value: d.notPunched, label: 'Not punched in', tone: d.notPunched ? 'warn' : 'ok' },
-        { icon: 'ledger', value: mine ? mine.systemDays : 0, label: `System days · ${month}`, tone: 'primary', href: '#/hr/billing' },
-      ])}
-      ${dashRow([{ value: d.active, label: 'Active' }, { value: d.punchedIn, label: 'In' }, { value: d.punchedOut, label: 'Out' }, { value: d.blocked, label: 'Blocked', href: '#/hr/exceptions' }])}
-      ${mine ? `<div class="card"><h3>Bill status · ${month}</h3>
-        <div class="dash-kv"><span>Workers</span><b>${mine.workers}</b></div>
-        <div class="dash-kv"><span>System days (payable)</span><b>${mine.systemDays}</b></div>
-        <div class="dash-kv"><span>Invoice days</span><b>${mine.invoiceDays ?? '—'}</b></div>
-        ${mine.gap != null && mine.gap !== 0 ? `<div class="gps-status ${mine.gap > 0 ? 'bad' : 'warn'}">Gap ${mine.gap > 0 ? '+' : ''}${mine.gap} days vs system</div>` : ''}
-        <p class="muted small">${bill.locked ? 'Month locked — figures are final.' : 'Month not locked yet — figures can still change.'}</p>
-        <a href="#/hr/billing" class="link-btn small">Open bill check →</a></div>` : ''}
-      ${dashPeople(people, { title: 'My workers', limit: 50 })}
+      ${dashHero({ title: 'My workers', pct: pctOf(d), subtitle: `${d.active} deployed · ${absent.length} not in today` })}
+      <div class="card">
+        <div class="dash-loc-head"><h3 style="margin:0">Payable · ${month}</h3>${bill ? `<span class="badge ${bill.locked ? 'badge-ok' : 'badge-warn'}">${bill.locked ? 'Final' : 'Provisional'}</span>` : ''}</div>
+        <div class="dash-bill-big"><b>${mine ? mine.systemDays : 0}</b><span>system days${mine ? ` across ${mine.workers} worker${mine.workers === 1 ? '' : 's'}` : ''}</span></div>
+        ${mine && mine.invoiceDays != null ? `<div class="dash-kv"><span>Your invoice</span><b>${mine.invoiceDays} days</b></div>
+          <div class="dash-kv"><span>Difference</span><b style="color:${mine.gap > 0 ? 'var(--bad)' : mine.gap < 0 ? 'var(--warn)' : 'var(--accent-dark)'}">${mine.gap > 0 ? '+' : ''}${mine.gap}${mine.gap === 0 ? ' · matches' : ' days'}</b></div>` : `<p class="muted small">${bill && bill.locked ? 'Finance has not entered your invoice yet.' : 'Month not locked — days can still change until Central HR locks it.'}</p>`}
+        <a href="#/hr/billing" class="link-btn small">Day-wise breakup →</a>
+      </div>
+      ${dashRow([{ value: d.punchedIn, label: 'In today' }, { value: absent.length, label: 'Not in', href: '#/hr/attendance' }, { value: d.blocked, label: 'Blocked', href: '#/hr/exceptions' }, { value: pendingReg, label: 'Registering' }])}
+      ${dashPeople(absent, { title: 'Not in today', emptyText: 'All your workers have punched in.', showAll: '#/hr/attendance' })}
+      ${dashPeople(people.filter(r => r.st.status !== 'absent'), { title: 'On site', limit: 50 })}
     `);
   });
 }
 
-// ---- Location Head: one site, read-only, what needs a look ----
+// ---- Location Head (BRD: own location, read-only, gate check). Oversight, not
+// operations: is the site running, and is anything wrong. ----
 function renderLocationHeadDashboard() {
   const s = requireHr(); if (!s) return;
-  withLoading(() => Promise.all([window.Api.dashboard({}), dashPeopleRows(), window.Api.listPunches({ result: 'blocked' }), window.Api.listPunches({ minRisk: 20 }), fetchIfAllowed('regularisations.read', () => window.Api.listRegularisations()), fetchIfAllowed('requests.view', () => window.Api.listWorkerRequests())]),
-    ([d, people, blocked, risky, regs, requests]) => {
+  withLoading(() => Promise.all([window.Api.dashboard({}), window.Api.listPunches({ result: 'blocked' }), window.Api.listPunches({ minRisk: 20 }), fetchIfAllowed('regularisations.read', () => window.Api.listRegularisations()), fetchIfAllowed('requests.view', () => window.Api.listWorkerRequests())]),
+    ([d, blocked, risky, regs, requests]) => {
       const site = d.byLocation[0] ? d.byLocation[0].location : 'My location';
+      const today = todayStr(Date.now());
+      const todayBlocked = blocked.filter(p => todayStr(p.ts) === today).length;
       const pendingRegs = regs.filter(r => r.status === 'pending').length;
       const pendingReqs = requests.filter(r => r.status === 'pending' || r.status === 'accepted').length;
+      const healthy = d.notPunched === 0 && todayBlocked === 0;
       renderShell(`
-        ${dashHero({ title: esc(site), pct: pctOf(d) })}
+        ${dashHero({ title: esc(site), pct: pctOf(d), tone: healthy ? 'ok' : '' })}
         ${dashTiles([
-          { icon: 'warn', value: d.notPunched, label: 'Not punched in', tone: d.notPunched ? 'warn' : 'ok', href: '#/hr/attendance' },
-          { icon: 'shield', value: d.blocked, label: 'Blocked today', tone: d.blocked ? 'bad' : '', href: '#/hr/exceptions' },
+          { icon: 'warn', value: d.notPunched, label: 'Not on site yet', tone: d.notPunched ? 'warn' : 'ok', href: '#/hr/attendance' },
+          { icon: 'shield', value: todayBlocked, label: 'Blocked attempts today', tone: todayBlocked ? 'bad' : 'ok', href: '#/hr/exceptions' },
         ])}
-        ${dashRow([{ value: d.active, label: 'Active' }, { value: d.punchedIn, label: 'In' }, { value: d.punchedOut, label: 'Out' }, { value: pendingRegs, label: 'Regularise', href: '#/hr/regularisations' }, { value: pendingReqs, label: 'Requests', href: '#/hr/requests' }])}
+        ${dashBreakdown('Vendors on this site', d.byVendor || [], 'vendor', 'No vendors deployed here yet.', 'building')}
         ${dashAttention(blocked, risky)}
-        ${dashPeople(people.filter(r => r.st.status !== 'present'), { title: 'Not fully present', emptyText: 'Everyone is in and out on time.', showAll: '#/hr/attendance' })}
+        ${dashRow([{ value: d.active, label: 'Strength' }, { value: d.punchedIn, label: 'In' }, { value: d.punchedOut, label: 'Out' }, { value: pendingRegs, label: 'Corrections pending', href: '#/hr/regularisations' }, { value: pendingReqs, label: 'Moves pending', href: '#/hr/requests' }])}
+        ${dashActions([{ icon: 'shield', label: 'Gate check', onclick: "location.hash='#/hr/gate';render()" }, { icon: 'calendar', label: 'Register', onclick: "location.hash='#/hr/attendance';render()" }, { icon: 'doc', label: 'Excel', onclick: "location.hash='#/hr/reports';render()" }])}
       `);
     });
 }
 
-// ---- MIS / Finance: this month's money view ----
+// ---- MIS / Finance (BRD R16: enters invoice days after Central HR locks the month;
+// vendors are paid on system days only). Home is the month-end checklist. ----
 function renderFinanceDashboard() {
   const s = requireHr(); if (!s) return;
   const month = window._financeDashMonth || lastMonthStr();
   withLoading(() => Promise.all([window.Api.vendorBill(month), window.Api.dashboard({})]), ([bill, d]) => {
-    const missing = bill.rows.filter(r => r.invoiceDays == null).length;
-    const gaps = bill.rows.filter(r => r.gap != null && r.gap !== 0).sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
-    const totalDays = bill.rows.reduce((a, r) => a + (r.systemDays || 0), 0);
+    const rows = bill.rows || [];
+    const entered = rows.filter(r => r.invoiceDays != null), missing = rows.filter(r => r.invoiceDays == null);
+    const gaps = rows.filter(r => r.gap != null && r.gap !== 0).sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
+    const totalDays = Math.round(rows.reduce((a, r) => a + (r.systemDays || 0), 0) * 10) / 10;
+    const over = Math.round(gaps.filter(r => r.gap > 0).reduce((a, r) => a + r.gap, 0) * 10) / 10;
+    const step = (done, label, sub) => `<div class="dash-step ${done ? 'done' : ''}"><span class="dash-step-mark">${done ? '✓' : ''}</span><div><b>${label}</b><span class="muted small">${sub}</span></div></div>`;
     renderShell(`
-      ${dashHero({ title: 'Finance overview', subtitle: `<input type="month" class="input dash-month" value="${month}" max="${todayStr(Date.now()).slice(0, 7)}" onchange="window._financeDashMonth=this.value;renderFinanceDashboard()" />`, big: Math.round(totalDays * 10) / 10, bigLabel: 'payable days' })}
-      ${dashTiles([
-        { icon: 'ledger', value: missing, label: 'Invoices not entered', tone: missing ? 'warn' : 'ok', href: '#/hr/billing' },
-        { icon: 'warn', value: gaps.length, label: 'Vendors with a gap', tone: gaps.length ? 'bad' : 'ok', href: '#/hr/billing' },
-      ])}
-      ${dashRow([{ value: bill.rows.length, label: 'Vendors' }, { value: d.active, label: 'Active workers' }, { value: bill.locked ? '🔒' : '🔓', label: bill.locked ? 'Locked' : 'Not locked' }])}
+      ${dashHero({ title: 'Month-end', subtitle: `<input type="month" class="input dash-month" value="${month}" max="${todayStr(Date.now()).slice(0, 7)}" onchange="window._financeDashMonth=this.value;renderFinanceDashboard()" />`, big: totalDays, bigLabel: 'payable days' })}
       <div class="card">
-        <h3>Vendor gaps</h3>
-        ${gaps.length === 0 ? emptyState('No gaps — every entered invoice matches system days.', 'ledger') : gaps.map(r => `
-          <div class="dash-kv"><span>${esc(r.vendorName)}<br/><span class="muted small">${r.systemDays} system · ${r.invoiceDays ?? '—'} invoiced</span></span><b style="color:${r.gap > 0 ? 'var(--bad)' : 'var(--warn)'}">${r.gap > 0 ? '+' : ''}${r.gap}</b></div>`).join('')}
-        <a href="#/hr/billing" class="link-btn small" style="display:inline-block;margin-top:8px">Open vendor bill check →</a>
+        <h3>Checklist · ${month}</h3>
+        ${step(bill.locked, 'Attendance locked by Central HR', bill.locked ? `Locked ${bill.lock && bill.lock.locked_at ? new Date(bill.lock.locked_at).toLocaleDateString() : ''}` : 'Waiting — invoices can be entered only after this')}
+        ${step(rows.length > 0 && missing.length === 0, `Invoice days entered · ${entered.length}/${rows.length} vendors`, missing.length ? missing.map(r => esc(r.vendorName)).join(', ') + ' pending' : rows.length ? 'All vendors entered' : 'No vendors with attendance this month')}
+        ${step(rows.length > 0 && missing.length === 0 && gaps.length === 0, gaps.length ? `${gaps.length} vendor${gaps.length === 1 ? '' : 's'} with a gap` : 'Gaps resolved', gaps.length ? `Over-billed total: +${over} days — reconcile before payment` : 'Every entered invoice matches system days')}
       </div>
+      ${dashTiles([
+        { icon: 'ledger', value: missing.length, label: 'Invoices to enter', tone: missing.length ? 'warn' : 'ok', href: '#/hr/billing' },
+        { icon: 'warn', value: gaps.length, label: 'Gaps to reconcile', tone: gaps.length ? 'bad' : 'ok', href: '#/hr/billing' },
+      ])}
+      ${gaps.length ? `<div class="card"><h3>Largest gaps</h3>${gaps.slice(0, 5).map(r => `
+        <div class="dash-kv"><span>${esc(r.vendorName)}<br/><span class="muted small">${r.systemDays} system · ${r.invoiceDays} invoiced</span></span><b style="color:${r.gap > 0 ? 'var(--bad)' : 'var(--warn)'}">${r.gap > 0 ? '+' : ''}${r.gap}</b></div>`).join('')}
+        <a href="#/hr/billing" class="link-btn small" style="display:inline-block;margin-top:8px">Open bill check →</a></div>` : ''}
+      ${dashRow([{ value: rows.length, label: 'Vendors' }, { value: d.active, label: 'Active workers' }, { value: entered.length, label: 'Entered' }])}
+      ${dashActions([{ icon: 'ledger', label: 'Vendor bill check', onclick: "location.hash='#/hr/billing';render()" }, { icon: 'doc', label: 'Muster roll', onclick: "location.hash='#/hr/reports';render()" }, { icon: 'sparkle', label: 'Ask AI', onclick: "location.hash='#/hr/ask';render()" }])}
+    `);
+  });
+}
+
+// ---- Security (BRD: gate check; sees blocked punches + audit only; no worker list).
+// Home is the gate: search box first, then what was blocked today. ----
+function renderSecurityDashboard() {
+  const s = requireHr(); if (!s) return;
+  withLoading(() => window.Api.listPunches({ result: 'blocked' }), (blocked) => {
+    const today = todayStr(Date.now());
+    const todays = blocked.filter(p => todayStr(p.ts) === today).sort((a, b) => b.ts - a.ts);
+    renderShell(`
+      ${dashHero({ title: 'Gate', subtitle: DASH_DATE(), big: todays.length, bigLabel: 'blocked today', tone: todays.length ? 'warn' : 'ok' })}
+      <div class="card">
+        <h3>Check a person at the gate</h3>
+        <p class="muted small">No HR approval, no entry. Type the mobile number or name, then compare the photo with the person in front of you.</p>
+        <input id="gate_q" class="input" placeholder="Mobile or name" onkeydown="if(event.key==='Enter')gateSearch()" />
+        <button class="btn primary block big" onclick="gateSearch()">Check</button>
+        <div id="gate_results"></div>
+      </div>
+      <div class="card">
+        <h3>Blocked today</h3>
+        ${todays.length === 0 ? emptyState('No blocked punch attempts today.', 'shield') : todays.map(p => `
+          <div class="dash-person">
+            ${thumbHtml(p.selfie_data_url)}
+            <div class="dash-person-text"><b>${esc(p.worker_name || p.worker_id)}</b><span class="muted small">${p.type.toUpperCase()} · ${new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+            <span class="badge badge-bad">${esc(reasonLabel(p.reason))}</span>
+          </div>`).join('')}
+        <a href="#/hr/exceptions" class="link-btn small" style="display:inline-block;margin-top:8px">All blocked attempts →</a>
+      </div>
+    `);
+  });
+}
+
+// ---- System Admin (BRD: masters, users, gate tablets; no worker data). Home is the
+// setup state of the system — what's configured, what isn't. ----
+function renderAdminDashboard() {
+  const s = requireHr(); if (!s) return;
+  withLoading(() => Promise.all([window.Api.listVendors(), window.Api.listLocations(), window.Api.listAdminUsers(), fetchIfAllowed('kiosks.manage', () => window.Api.listKiosks())]), ([vendors, locations, users, kiosks]) => {
+    const today = todayStr(Date.now());
+    const activeVendors = vendors.filter(v => v.status !== 'inactive' && !(v.contract_end && v.contract_end < today));
+    const expiring = vendors.filter(v => v.contract_end && v.contract_end >= today && (new Date(v.contract_end) - Date.now()) < 30 * 86400000);
+    const noKyc = activeVendors.filter(v => !v.contact_aadhaar_qr_at && !v.contact_pan_number);
+    const activeUsers = users.filter(u => u.status === 'active');
+    const byRole = activeUsers.reduce((m, u) => { m[u.role] = (m[u.role] || 0) + 1; return m; }, {});
+    const unscoped = activeUsers.filter(u => (['site_hr', 'location_head'].includes(u.role) && !u.location_id) || (u.role === 'vendor_coordinator' && !u.vendor_id));
+    const pairedKiosks = kiosks.filter(k => k.status === 'active' && k.paired_at), unpaired = kiosks.filter(k => k.status === 'active' && !k.paired_at);
+    const sitesWithKiosk = locations.filter(l => kiosks.some(k => k.location_id === l.id && k.status === 'active' && k.paired_at)).length;
+    const issues = [
+      dashTask(unscoped.length, 'warn', 'Users with no site/vendor assigned', 'They see nothing until assigned', '#/hr/users', 'bad'),
+      dashTask(unpaired.length, 'camera', 'Gate tablets created but never paired', 'Pairing code may have expired', '#/hr/kiosks', 'warn'),
+      dashTask(expiring.length, 'building', 'Vendor contracts ending within 30 days', 'Workers under them stop being able to register', '#/hr/masters', 'warn'),
+      dashTask(noKyc.length, 'user', 'Active vendors with no contact KYC', 'Aadhaar/PAN of the authorised contact', '#/hr/masters', ''),
+    ].join('');
+    renderShell(`
+      ${dashHero({ title: 'System setup', subtitle: `${locations.length} site${locations.length === 1 ? '' : 's'} · ${activeVendors.length} vendor${activeVendors.length === 1 ? '' : 's'} · ${activeUsers.length} user${activeUsers.length === 1 ? '' : 's'}`, big: pairedKiosks.length, bigLabel: 'tablets live' })}
+      <div class="card">
+        <h3>Needs setup</h3>
+        ${issues || emptyState('Everything is configured.', 'check')}
+      </div>
+      ${dashTiles([
+        { icon: 'building', value: locations.length, label: 'Sites', href: '#/hr/masters', tone: 'primary' },
+        { icon: 'camera', value: `${sitesWithKiosk}/${locations.length}`, label: 'Sites with a live gate tablet', href: '#/hr/kiosks', tone: sitesWithKiosk < locations.length ? 'warn' : 'ok' },
+      ])}
+      <div class="card">
+        <h3>Users by role</h3>
+        ${Object.entries(ROLE_LABELS).map(([k, label]) => `<div class="dash-kv"><span>${label}</span><b>${byRole[k] || 0}</b></div>`).join('')}
+        <a href="#/hr/users" class="link-btn small" style="display:inline-block;margin-top:8px">Manage users →</a>
+      </div>
+      ${dashActions([{ icon: 'user', label: 'Add user', onclick: "location.hash='#/hr/users';render()" }, { icon: 'building', label: 'Vendors & sites', onclick: "location.hash='#/hr/masters';render()" }, { icon: 'camera', label: 'Gate tablets', onclick: "location.hash='#/hr/kiosks';render()" }])}
     `);
   });
 }
@@ -258,8 +376,8 @@ function renderFinanceDashboard() {
 // (its home is Gate check); System Admin has no worker data to put on a dashboard.
 function renderHrDashboard() {
   const role = (getSession() || {}).role;
-  return ({ central_hr: renderCentralHrDashboard, site_hr: renderSiteHrDashboard, reporting_manager: renderManagerDashboard, vendor_coordinator: renderVendorDashboard }[role] || renderCentralHrDashboard)();
+  return ({ central_hr: renderCentralHrDashboard, site_hr: renderSiteHrDashboard, reporting_manager: renderManagerDashboard, vendor_coordinator: renderVendorDashboard, security: renderSecurityDashboard, system_admin: renderAdminDashboard }[role] || renderCentralHrDashboard)();
 }
 function dashLabel() {
-  return { site_hr: 'My site', reporting_manager: 'My team', vendor_coordinator: 'My workers' }[(getSession() || {}).role] || t('hrDashboard');
+  return { site_hr: 'My site', reporting_manager: 'My team', vendor_coordinator: 'My workers', security: 'Gate', system_admin: 'Setup' }[(getSession() || {}).role] || t('hrDashboard');
 }

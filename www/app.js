@@ -312,7 +312,7 @@ function renderShell(innerHtml) {
       <button class="btn secondary small" style="margin-left:8px" onclick="endAssistedSession()">Exit</button></div>` : '';
   app.innerHTML = assistBanner + `
     <header class="topbar">
-      <div class="topbar-title">
+      <div class="topbar-title" onclick="modeSwitchTap()">
         <div class="app-name">${t('appName')}</div>
         ${s ? '' : `<div class="demo-badge">${getApiBase() ? esc(getApiBase().replace(/^https?:\/\//, '')) : t('demoBadge')}</div>`}
       </div>
@@ -359,6 +359,8 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/gate', icon: 'shield', label: () => 'Gate check', perms: ['workers.gatecheck'], nav: true, onlyWithout: 'workers.read' },
   // Role-tailored home screens — these replace the generic dashboard (below) for the
   // one role each is built for, so that role never sees two dashboard tabs.
+  { hash: '#/hr/dashboard', icon: 'shield', label: () => 'Gate', perms: ['punches.read'], nav: true, onlyRole: ['security'] },
+  { hash: '#/hr/dashboard', icon: 'chart', label: () => 'Setup', perms: ['masters.write'], nav: true, onlyRole: ['system_admin'] },
   { hash: '#/hr/location-dashboard', icon: 'chart', label: () => 'My location', perms: ['workers.read', 'punches.read'], nav: true, onlyRole: ['location_head'] },
   { hash: '#/hr/finance-dashboard', icon: 'chart', label: () => 'Finance overview', perms: ['billing.read'], nav: true, onlyRole: ['mis_finance'] },
   { hash: '#/hr/dashboard', icon: 'chart', label: () => dashLabel(), perms: ['workers.read', 'punches.read'], nav: true, hiddenIfVisible: ['#/hr/location-dashboard', '#/hr/finance-dashboard'] },
@@ -435,19 +437,48 @@ function switchLang(l) { setLang(l); render(); }
 
 // ---------------- Splash / Server settings ----------------
 
+// A session that existed before device modes were introduced (e.g. a tablet paired
+// on an older build) has no mode recorded — adopt one from it, so an upgrade never
+// turns a locked tablet back into a three-door chooser.
+(function adoptModeFromExistingSession() {
+  const s = getSession();
+  if (s && s.role && !s.assisted && !getAppMode()) setAppMode(s.role === 'kiosk' ? 'kiosk' : s.role === 'worker' ? 'worker' : 'hr');
+})();
+
 function renderSplash() {
   loginState = {}; // reaching splash by any path (logout, settings save, back) resets any in-flight login sub-step
+  // A device that has signed in before goes straight to that mode's login — the
+  // three-door chooser is only for a fresh install (or after "switch mode").
+  const mode = getAppMode();
+  if (mode === 'worker') return startWorkerLogin();
+  if (mode === 'hr') return startHrLogin();
+  if (mode === 'kiosk') return renderKioskPair();
   const base = getApiBase();
   renderShell(`
     <div class="card center-card">
       <h2>${t('appName')}</h2>
       <p class="muted small">${t('connectedTo')} ${esc(base)}</p>
+      <p class="muted small" style="margin-top:14px">${bi('यह फ़ोन किसके लिए है? एक बार चुनें।', 'Who is this device for? Choose once.')}</p>
       <button class="btn primary block" onclick="startWorkerLogin()">${t('roleWorker')}</button>
       <button class="btn secondary block" onclick="startHrLogin()">${t('roleHr')}</button>
       <button class="link-btn small" style="margin-top:10px" onclick="renderKioskPair()">🖥️ Gate tablet (kiosk)</button>
       <button class="link-btn small" style="margin-top:16px" onclick="location.hash='#/settings';render()">${t('serverSettings')}</button>
     </div>
   `);
+}
+// Hidden escape hatch: 7 taps on the app name within 3 s clears the device mode (and
+// any session) and brings the chooser back — for an admin re-purposing a phone or
+// un-pairing a tablet. Deliberately not a visible button on the kiosk.
+let modeTaps = [];
+function modeSwitchTap() {
+  const now = Date.now();
+  modeTaps = modeTaps.filter(ts => now - ts < 3000); modeTaps.push(now);
+  if (modeTaps.length >= 7) {
+    modeTaps = [];
+    if (!confirm(biText('यह डिवाइस का मोड बदल देगा और साइन-आउट कर देगा। जारी रखें?', 'This resets which role this device is for and signs out. Continue?'))) return;
+    setAppMode(''); clearSessionData(); loginState = {};
+    location.hash = '#/'; render();
+  }
 }
 
 function renderSettings() {
@@ -2563,10 +2594,11 @@ function renderKioskPair() {
   renderShell(`
     <div class="card center-card">
       <h3>🖥️ Gate tablet setup</h3>
+      ${getAppMode() === 'kiosk' ? `<p class="gps-status warn small">${bi('इस टैबलेट की पेयरिंग हट गई है — HR से नया कोड लें।', 'This tablet is no longer paired — ask HR for a new code.')}</p>` : ''}
       <p class="muted small">Enter the 6-digit pairing code from HR (More → Gate tablets). This tablet then stays on this site's punch screen.</p>
       <input id="kp_code" class="input" maxlength="6" inputmode="numeric" />
       <button class="btn primary block" onclick="kioskPairNow()">Pair this tablet</button>
-      <button class="link-btn small" onclick="location.hash='#/';render()">${t('back')}</button>
+      ${getAppMode() === 'kiosk' ? '' : `<button class="link-btn small" onclick="location.hash='#/';render()">${t('back')}</button>`}
     </div>`);
 }
 async function kioskPairNow() {

@@ -343,6 +343,26 @@ details summary { cursor: pointer; margin-top: 10px; padding: 8px 0; min-height:
 
 .dash-loc { padding: 8px 0; } .dash-loc-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
 .bar-fill.warn { background: var(--warn-gradient); } .bar-fill.bad { background: linear-gradient(135deg, #f0495f, #c22233); }
+/* Task rows (Site HR / System Admin "to do" lists) and month-end checklist steps (Finance). */
+.dash-task { display: flex; align-items: center; gap: 12px; padding: 11px 12px; margin: 6px 0; border-radius: var(--radius-sm); background: var(--primary-tint); cursor: pointer; }
+.dash-task:active { transform: scale(0.98); }
+.dash-task-icon { width: 34px; height: 34px; border-radius: 10px; background: #fff; color: var(--primary); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.dash-task-icon svg { width: 18px; height: 18px; }
+.dash-task-text { flex: 1; min-width: 0; display: flex; flex-direction: column; } .dash-task-text b { font-size: 14px; }
+.dash-task-count { font-size: 18px; font-weight: 800; color: var(--primary); min-width: 28px; text-align: right; }
+.dash-task.warn { background: var(--warn-tint); } .dash-task.warn .dash-task-icon { color: var(--warn); } .dash-task.warn .dash-task-count { color: var(--warn); }
+.dash-task.bad { background: var(--bad-tint); } .dash-task.bad .dash-task-icon { color: var(--bad); } .dash-task.bad .dash-task-count { color: var(--bad); }
+.dash-task.primary .dash-task-count { color: var(--primary); }
+.dash-step { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
+.dash-step:last-of-type { border-bottom: none; }
+.dash-step > div { display: flex; flex-direction: column; } .dash-step b { font-size: 14px; }
+.dash-step-mark { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--border); flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: #fff; margin-top: 1px; }
+.dash-step.done .dash-step-mark { background: var(--accent-gradient); border-color: transparent; }
+.dash-step.done b { color: var(--muted); font-weight: 600; }
+.dash-bill-big { margin: 8px 0 4px; } .dash-bill-big b { display: block; font-size: 40px; line-height: 1; color: var(--text-strong); } .dash-bill-big span { font-size: 13px; color: var(--muted); font-weight: 600; }
+.dash-hero.ok { background: var(--accent-gradient); box-shadow: 0 10px 24px rgba(25, 169, 116, 0.3); }
+.dash-hero.warn { background: var(--warn-gradient); box-shadow: 0 10px 24px rgba(240, 117, 15, 0.3); }
+
 .dash-kv { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border-soft); font-size: 14px; }
 .dash-kv:last-of-type { border-bottom: none; } .dash-kv b { font-size: 16px; }
 
