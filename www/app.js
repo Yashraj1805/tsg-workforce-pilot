@@ -43,7 +43,9 @@ function shrinkDataUrl(dataUrl, maxDim, quality) {
       resolve(canvas.toDataURL('image/jpeg', quality || 0.8));
     };
     img.onerror = () => resolve(dataUrl);
-    setTimeout(() => resolve(dataUrl), 4000); // never block an upload on a decoder that stalls
+    // A 12 MP frame can take >4 s to decode on a 2 GB phone; bailing out early meant the
+    // full-size original (≈1 MB) was uploaded and stored — defeating the whole shrink.
+    setTimeout(() => resolve(dataUrl), 15000); // never block an upload on a decoder that stalls
     img.src = dataUrl;
   });
 }
@@ -85,7 +87,7 @@ const ICONS = {
 function icon(name) { return ICONS[name] || ''; }
 
 function avatarHtml(worker) {
-  if (worker.photo_data_url) return `<img src="${worker.photo_data_url}" class="avatar" />`;
+  if (worker.photo_data_url) return `<img src="${imgSrc(worker.photo_data_url)}" class="avatar" />`;
   const initials = (worker.name || '?').trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
   return `<div class="avatar">${esc(initials)}</div>`;
 }
@@ -95,6 +97,11 @@ function emptyState(message, iconName) {
 }
 // A thumbnail only when there's an actual image — a blocked punch can carry a selfie
 // field that isn't a usable data: URL, which the bare <img> rendered as a broken icon.
+// Only a real JPEG/PNG data URL may become an <img src>; anything else (a worker-supplied
+// string with a quote in it, say) renders as no image instead of as markup.
+function imgSrc(v) {
+  return (typeof v === 'string' && /^data:image\/(jpeg|jpg|png);base64,[A-Za-z0-9+/=]+$/.test(v)) ? v : '';
+}
 function thumbHtml(dataUrl) {
   // < 200 chars is a bare header with no pixels (seen on test rows), never a real photo.
   return dataUrl && /^data:image\//.test(dataUrl) && dataUrl.length > 200 ? `<img src="${esc(dataUrl)}" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`;
@@ -483,10 +490,43 @@ function modeSwitchTap() {
   modeTaps = modeTaps.filter(ts => now - ts < 3000); modeTaps.push(now);
   if (modeTaps.length >= 7) {
     modeTaps = [];
+    // A gate tablet can only be un-paired by someone with an HR login — otherwise any
+    // worker at the gate could tap the title seven times and take the tablet offline.
+    if (getAppMode() === 'kiosk') return renderKioskUnlock();
     if (!confirm(biText('यह डिवाइस का मोड बदल देगा और साइन-आउट कर देगा। जारी रखें?', 'This resets which role this device is for and signs out. Continue?'))) return;
-    setAppMode(''); clearSessionData(); loginState = {};
-    location.hash = '#/'; render();
+    resetDeviceMode();
   }
+}
+function resetDeviceMode() {
+  kioskNative(false);
+  setAppMode(''); clearSessionData(); loginState = {};
+  location.hash = '#/'; render();
+}
+function renderKioskUnlock() {
+  const el = document.createElement('div');
+  el.className = 'result-screen queued';
+  el.innerHTML = `
+    <div class="card" style="max-width:380px;width:100%;text-align:left">
+      <h3>${icon('shield')} Unlock gate tablet</h3>
+      <p class="muted small">Sign in with an HR login to change this tablet's mode.</p>
+      <label>Email</label><input id="ku_email" class="input" type="email" autocomplete="username" />
+      <label>${t('password')}</label><input id="ku_pw" class="input" type="password" autocomplete="current-password" />
+      <button class="btn primary block" id="ku_go">Unlock</button>
+      <button class="btn secondary block" id="ku_cancel">${t('cancel')}</button>
+    </div>`;
+  document.body.appendChild(el);
+  el.querySelector('#ku_cancel').onclick = () => el.remove();
+  el.querySelector('#ku_go').onclick = async () => {
+    const email = el.querySelector('#ku_email').value.trim(), password = el.querySelector('#ku_pw').value;
+    try {
+      const kioskSession = getSession();
+      const r = await window.Api.hrLogin(email, password); // verifies the credentials; the kiosk session is kept until reset
+      if (!r.token) throw new Error('Login failed');
+      el.remove();
+      if (kioskSession) setSessionData(kioskSession);
+      if (confirm(`Unlock as ${r.hrUser.name}? The tablet will need pairing again.`)) resetDeviceMode();
+    } catch (e) { toast(e.message, 'error'); }
+  };
 }
 
 function renderSettings() {
@@ -704,7 +744,7 @@ function regPhoto() {
       ${regHeader(2, 'अपनी फोटो लें', 'Take your photo')}
       <p class="muted small">${bi('कैमरे की ओर सीधे देखें। फोटो में सिर्फ़ आप हों।', 'Look straight at the camera. Only you in the photo.')}</p>
       <div class="selfie-frame">
-        ${w.photo_data_url ? `<img src="${w.photo_data_url}" class="selfie-preview" />` : `<div class="selfie-placeholder"><span class="icon-inline" style="width:28px;height:28px;margin:0 0 6px">${icon('camera')}</span></div>`}
+        ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" class="selfie-preview" />` : `<div class="selfie-placeholder"><span class="icon-inline" style="width:28px;height:28px;margin:0 0 6px">${icon('camera')}</span></div>`}
       </div>
       <button class="btn ${w.photo_data_url ? 'secondary' : 'primary'} block big" onclick="regCapturePhoto()">📷 ${w.photo_data_url ? bi('फिर से लें', 'Retake') : bi('फोटो लें', 'Take photo')}</button>
       ${regNav(1, null, 'renderRegStep(3)', !w.photo_data_url)}
@@ -808,7 +848,7 @@ function regPan() {
         <button class="btn secondary small" style="margin-top:6px" onclick="renderRegStep(3)">${bi('आधार पर जाएँ', 'Go to Aadhaar')}</button></div>` : ''}
       <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ ' + bi('पैन की पुष्टि हो गई', 'PAN verified') : '⏳ ' + bi('पैन की पुष्टि बाकी है', 'PAN not yet verified')}</div>
       ${!w.pan_verified ? `
-        ${w.pan_photo_data_url ? `<img src="${w.pan_photo_data_url}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
+        ${w.pan_photo_data_url ? `<img src="${imgSrc(w.pan_photo_data_url)}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
         ${regState.panRead ? `<div class="kyc-status">PAN read from photo: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
           <button class="btn primary block" onclick="verifyPan(true)">Yes, verify this PAN</button>` : ''}
         <button class="btn secondary block" onclick="regPanPhoto()">📷 ${w.pan_photo_data_url ? bi('पैन की फोटो फिर से लें', 'Retake PAN photo') : bi('पैन कार्ड की फोटो लें', 'Take photo of PAN card')}</button>
@@ -823,7 +863,7 @@ function regPan() {
           <button class="btn warn block" style="margin-top:8px" onclick="skipKycDev()">${t('devSkipButton')}</button>
         </div>` : ''}
       <details style="margin-top:12px"><summary class="link-btn small">${bi('बैंक पासबुक (अगर ज़रूरत हो)', 'Bank passbook (if needed)')}</summary>
-        ${w.bank_passbook_data_url ? `<img src="${w.bank_passbook_data_url}" class="selfie-preview" style="border-radius:8px;max-height:120px" />` : ''}
+        ${w.bank_passbook_data_url ? `<img src="${imgSrc(w.bank_passbook_data_url)}" class="selfie-preview" style="border-radius:8px;max-height:120px" />` : ''}
         <button class="btn secondary small" onclick="regPassbookPhoto()">📷 ${w.bank_passbook_data_url ? 'Retake' : 'Take photo'}</button>
       </details>
       ${regNav(3, null, 'renderRegStep(5)', !(w.aadhaar_verified && w.pan_verified))}
@@ -979,7 +1019,7 @@ function regReviewRender() {
   renderShell(`
     <div class="card">
       ${regHeader(8, 'जाँचें और भेजें', 'Check and submit')}
-      ${w.photo_data_url ? `<img src="${w.photo_data_url}" class="avatar" style="width:80px;height:80px;display:block;margin:0 auto 10px" />` : ''}
+      ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" class="avatar" style="width:80px;height:80px;display:block;margin:0 auto 10px" />` : ''}
       <table class="tbl">
         ${row('नाम', 'Name', esc(w.name || '—'), 3)}
         ${row('आधार', 'Aadhaar', `${esc(w.aadhaar_masked || '—')} ${w.aadhaar_verified ? '✅' : '⏳'}`, 3)}
@@ -1013,11 +1053,25 @@ function renderPending() {
     // Not submitted yet (or Home tapped mid-registration): back to the wizard, never a
     // false "Registration submitted".
     if (w.status === 'draft') { location.hash = '#/w/register'; render(); return; }
+    if (w.status === 'rejected') {
+      speak('आपका पंजीकरण स्वीकार नहीं हुआ। साइट HR से बात करें।', 'Your registration was not approved. Please talk to Site HR.');
+      renderShell(`
+        <div class="card center-card">
+          <div class="result-mark" style="color:var(--bad);font-size:48px">✕</div>
+          <h3>${bi('पंजीकरण स्वीकार नहीं हुआ', 'Registration not approved')}</h3>
+          ${w.reject_reason ? `<p><b>${bi('कारण', 'Reason')}:</b> ${esc(w.reject_reason)}</p>` : ''}
+          <p class="muted">${bi('मदद के लिए साइट HR से बात करें।', 'Talk to your Site HR for help.')}</p>
+          ${(w.siteHr && w.siteHr.phone) ? `<a class="btn primary block" href="tel:${esc(w.siteHr.phone)}">📞 ${bi('साइट HR को कॉल करें', 'Call site HR')}</a>` : ''}
+          <button class="btn secondary block" onclick="renderPending()">${bi('फिर से देखें', 'Check again')}</button>
+        </div>`);
+      return;
+    }
     renderShell(`
       <div class="card center-card">
         <h3>${t('pendingTitle')}</h3>
         <p>${t('pendingBody')}</p>
-        ${w.status === 'rejected' ? `<p class="badge badge-bad">Rejected</p>` : ''}
+        ${(w.siteHr && w.siteHr.phone) ? `<a class="btn secondary block" href="tel:${esc(w.siteHr.phone)}">📞 ${bi('साइट HR को कॉल करें', 'Call site HR')}</a>` : ''}
+        <button class="btn secondary block" onclick="renderPending()">${bi('फिर से देखें', 'Check again')}</button>
         ${w.status === 'sent_back' ? `<p class="badge badge-warn">Sent back: ${esc(w.send_back_reason||'')}</p><button class="btn secondary" onclick="location.hash='#/w/register';render()">Edit & resubmit</button>` : ''}
         <div class="worker-summary">
           <div><b>${esc(w.name)}</b></div>
@@ -1170,7 +1224,24 @@ function scanFaceForPunch() {
 
       let stopped = false;
       let attempts = 0;
+      let apiFails = 0; // consecutive detect-call failures (Gemini down / no network) → offer a manual shutter
       const MAX_ATTEMPTS = 20; // each attempt is faster now (smaller image, less dead time), so more fit in roughly the same wall-clock budget
+      const shutter = async () => {
+        if (stopped) return;
+        statusEl.textContent = t('scanLocked');
+        const photo = await window.TSGNative.capturePreviewPhoto();
+        await cleanup();
+        if (!photo.ok) { resolve({ ok: false, error: photo.error }); return; }
+        resolve({ ok: true, dataUrl: photo.dataUrl, livenessFrameDataUrl: prevSampleDataUrl, manual: true });
+      };
+      const offerShutter = () => {
+        if (overlay.querySelector('#scanShutterBtn')) return;
+        const b = document.createElement('button');
+        b.id = 'scanShutterBtn'; b.className = 'btn success scan-shutter'; b.textContent = bi('📷 फोटो लें', '📷 Take photo');
+        b.onclick = shutter;
+        overlay.appendChild(b);
+        statusEl.textContent = bi('ऑटो-स्कैन उपलब्ध नहीं — बटन दबाकर फोटो लें', 'Auto-scan unavailable — tap to take the photo');
+      };
       // Passive liveness (phase 1): the low-res preview sample from the attempt BEFORE
       // the one that locks is a free second frame, taken a fraction of a second earlier
       // — paired with the final full-quality capture for an anti-spoofing check on the
@@ -1199,6 +1270,7 @@ function scanFaceForPunch() {
         try {
           const detectResult = await window.Api.detectFace(sample.dataUrl);
           if (stopped) return;
+          apiFails = 0;
           if (detectResult.faceDetected) {
             ringEl.classList.add('detected');
             statusEl.textContent = t('scanLocked');
@@ -1210,7 +1282,12 @@ function scanFaceForPunch() {
           }
           statusEl.textContent = detectResult.reason || t('scanHint');
         } catch (e) {
+          if (stopped) return;
           statusEl.textContent = e.message || t('scanHint');
+          // Two failed polls in a row (503 Gemini, timeout, 5xx): don't burn five minutes
+          // retrying — let the person take the photo themselves; the server still runs the
+          // real face match on it.
+          if (++apiFails >= 2) offerShutter();
         }
         // Skip attempt 1 as a liveness candidate — right after the camera opens,
         // auto-exposure/focus hasn't settled yet and the frame can come back black or
@@ -1309,7 +1386,11 @@ async function syncOfflinePunches() {
         toast(`${bi('पंच भेज दिया', 'Offline punch sent')} (${fmtTime(item.capturedAt)})`, 'success');
       } catch (e) {
         if (e.status === 0) break; // still offline — try again later
-        toast(`${item.payload.type === 'in' ? 'Punch-in' : 'Punch-out'} ${fmtTime(item.capturedAt)} not accepted: ${e.message}`, 'error');
+        // Only a definitive refusal (bad request, forbidden, already punched, failed a
+        // check) drops the punch. A 401 (session expired), 429 or any server/Gemini
+        // outage keeps it queued — it was being deleted on those too, losing real days.
+        if (![400, 403, 409, 422].includes(e.status)) { if (e.status === 401) toast(bi('सेशन खत्म — दोबारा लॉगिन करें, पंच सुरक्षित है', 'Session expired — sign in again, your punch is kept'), 'error'); break; }
+        toast(`${item.payload.type === 'in' ? bi('पंच इन', 'Punch-in') : bi('पंच आउट', 'Punch-out')} ${fmtTime(item.capturedAt)} ${bi('स्वीकार नहीं हुआ', 'not accepted')}: ${e.message}`, 'error');
       }
       setOfflineQueue(offlineQueue().filter(i => i.clientId !== item.clientId));
     }
@@ -1330,6 +1411,8 @@ function showResult(ok, titleHi, titleEn, lines, onClose) {
     ${(lines || []).filter(Boolean).map(l => `<div class="result-line">${l}</div>`).join('')}
     <button class="btn secondary result-close">${bi('ठीक है', 'OK')}</button>`;
   document.body.appendChild(el);
+  // Haptics: TTS can be off or drowned out at a gate; the pattern alone tells the worker.
+  try { if (navigator.vibrate) navigator.vibrate(ok === 'queued' ? [120, 80, 120] : ok ? [220] : [90, 60, 90, 60, 220]); } catch (e) { /* unsupported */ }
   const close = () => { el.remove(); stopVoice(); if (onClose) onClose(); else renderWorkerHome(); };
   el.querySelector('.result-close').onclick = close;
   speak(`${titleHi}. ${(lines || []).map(l => String(l).replace(/<[^>]+>/g, '')).join('. ')}`, `${titleEn}. ${(lines || []).map(l => String(l).replace(/<[^>]+>/g, '')).join('. ')}`, true);
@@ -1659,7 +1742,7 @@ function renderHrApprovals() {
         <datalist id="mgrEmails">${managers.map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join('')}</datalist>
         ${pending.length === 0 ? emptyState('All caught up — no registrations waiting for approval.', 'check') : pending.map(w => `
           <div class="approval-row" id="approvalRow_${w.id}">
-            <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${w.photo_data_url}" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
+            <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
             <div class="approval-info">
               <b><a href="javascript:void(0)" onclick="viewWorker('${w.id}')" style="color:inherit">${esc(w.name)}</a></b> ${statusBadge(w.status)}<br/>
               <span class="muted small">${esc(w.mobile)} · ${esc(w.designation||'')}</span><br/>
@@ -1669,8 +1752,8 @@ function renderHrApprovals() {
               ${w.registered_by ? `<br/><span class="muted small">Registered in person by ${esc(w.registered_by)}</span>` : ""}
             </div>
             <div class="approval-actions">
-              <button class="btn primary small" onclick="hrApprove('${w.id}')">${t('approve')}</button>
-              <button class="btn secondary small" onclick="hrSendBack('${w.id}')">${t('sendBack')}</button>
+              ${w.status === 'sent_back' ? `<span class="muted small">Waiting for the worker to resubmit</span>` : `<button class="btn primary small" onclick="hrApprove('${w.id}')">${t('approve')}</button>
+              <button class="btn secondary small" onclick="hrSendBack('${w.id}')">${t('sendBack')}</button>`}
               <button class="btn danger small" onclick="hrReject('${w.id}')">${t('reject')}</button>
             </div>
           </div>
@@ -1758,8 +1841,8 @@ async function hrSendBack(id) {
   catch (e) { toast(e.message, 'error'); }
 }
 async function hrReject(id) {
-  if (!confirm('Reject this registration?')) return;
-  try { await window.Api.rejectWorker(id); toast('Rejected', 'success'); renderHrApprovals(); }
+  const reason = prompt('Reason for rejecting? (the worker is told this)'); if (!reason || reason.trim().length < 3) { if (reason !== null) toast('Give a reason', 'error'); return; }
+  try { await window.Api.rejectWorker(id, reason.trim()); toast('Rejected — worker notified', 'success'); renderHrApprovals(); }
   catch (e) { toast(e.message, 'error'); }
 }
 
@@ -1886,7 +1969,7 @@ function showPunchDay(d) {
   const ps = (window._histPunches || []).filter(p => todayStr(p.ts) === d).sort((a, b) => a.ts - b.ts);
   cell.innerHTML = `<div style="padding:8px">
     <div class="day-detail">${ps.map(p => `<div class="compare-item">
-      ${p.selfie_data_url ? `<img src="${p.selfie_data_url}" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
+      ${p.selfie_data_url ? `<img src="${imgSrc(p.selfie_data_url)}" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
       <span class="small">${p.type.toUpperCase()} ${fmtTime(p.ts)} ${p.result === 'blocked' ? '⛔ ' + esc(p.reason) : '✅'} ${p.distance_m != null ? p.distance_m + ' m' : ''}</span></div>`).join('')}</div>
     <div id="pmap_${d}" class="day-map"></div></div>`;
   const loc = w && w.location;
@@ -2024,7 +2107,7 @@ function renderHrWorkerDetail() {
   if (!id) { location.hash = '#/hr/workers'; render(); return; }
   withLoading(
     () => Promise.all([
-      window.Api.getWorkerById(id), window.Api.listPunches({ workerId: id }), window.Api.workerHistory(id),
+      window.Api.getWorkerById(id), window.Api.listPunches({ workerId: id, full: '1' }), window.Api.workerHistory(id),
       (hasPerm('workers.manage') || hasPerm('requests.raise')) ? Promise.all([window.Api.listLocations(), window.Api.listVendors()]) : Promise.resolve([[], []]),
     ]),
     ([w, punches, history, [locations, vendors]]) => {
@@ -2077,11 +2160,11 @@ function renderHrWorkerDetail() {
             <div class="compare-row">
               <div class="compare-pair">
                 <div class="compare-item">
-                  ${w.photo_data_url ? `<img src="${w.photo_data_url}" />` : `<div class="compare-placeholder">${icon('user')}</div>`}
+                  ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" />` : `<div class="compare-placeholder">${icon('user')}</div>`}
                   <span>${t('registrationPhoto')}</span>
                 </div>
                 <div class="compare-item">
-                  ${p.selfie_data_url ? `<img src="${p.selfie_data_url}" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
+                  ${p.selfie_data_url ? `<img src="${imgSrc(p.selfie_data_url)}" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
                   <span>${t('punchSelfie')}</span>
                 </div>
               </div>
@@ -2594,7 +2677,7 @@ async function gateSearch() {
     el.innerHTML = rows.length === 0 ? `<div class="gps-status bad" style="font-size:18px">❌ Not registered — no entry</div>` : rows.map(r => `
       <div class="worker-summary" style="border-left:6px solid ${r.entryAllowed ? 'var(--ok, #16a34a)' : 'var(--bad, #b91c1c)'}">
         <div class="profile-header">
-          ${r.photo ? `<img src="${r.photo}" class="avatar" style="width:72px;height:72px" />` : `<div class="avatar">?</div>`}
+          ${r.photo ? `<img src="${imgSrc(r.photo)}" class="avatar" style="width:72px;height:72px" />` : `<div class="avatar">?</div>`}
           <div class="profile-text">
             <h3>${esc(r.name || '—')}</h3>
             <div class="muted small">…${esc(r.mobileLast4)} · ${esc(r.vendor || '')} · ${esc(r.location || '')} · ${esc(r.designation || '')}</div>
@@ -2633,6 +2716,8 @@ function renderKiosk() {
   const s = getSession();
   if (!s || s.role !== 'kiosk') { location.hash = '#/'; render(); return; }
   kioskState = { digits: '' };
+  clearTimeout(kioskIdleTimer);
+  kioskNative(true);
   speak('अपने मोबाइल नंबर के आख़िरी चार अंक दबाएँ', 'Type the last 4 digits of your mobile number');
   renderKioskKeypad();
 }
@@ -2664,32 +2749,48 @@ async function kioskFind() {
         <h3>${bi('अपनी फोटो पर टैप करें', 'Tap your photo')}</h3>
         <div class="tile-grid">${list.map(c => `
           <button class="tile" ${c.next === 'done' ? 'disabled' : ''} onclick="kioskPunch('${c.id}', '${c.next}')">
-            ${c.photo ? `<img src="${c.photo}" class="avatar" style="width:90px;height:90px" />` : `<span class="tile-icon">🙂</span>`}
+            ${c.photo ? `<img src="${imgSrc(c.photo)}" class="avatar" style="width:90px;height:90px" />` : `<span class="tile-icon">🙂</span>`}
             <span class="tile-hi">${esc(c.firstName)}</span>
             <span class="tile-en">${c.next === 'in' ? 'Punch in' : c.next === 'out' ? 'Punch out' : 'Day complete'}</span>
           </button>`).join('')}</div>
         <button class="btn secondary block" onclick="renderKiosk()">${t('back')}</button>
       </div>`);
+    kioskArmIdle();
   } catch (e) { if (e.status === 401) { clearSessionData(); location.hash = '#/'; render(); } toast(e.message, 'error'); renderKiosk(); }
 }
+let kioskBusy = false;
 async function kioskPunch(workerId, next) {
-  const selfie = await scanFaceForPunch();
-  if (!selfie.ok) { if (!selfie.cancelled) toast(selfie.error, 'error'); return renderKiosk(); }
-  renderShell(`<div class="card center-card">${spinnerRow(t('checkingLocation'))}</div>`);
-  const pos = await window.TSGNative.getPosition();
-  if (!pos.ok) return showResult(false, 'लोकेशन नहीं मिली', 'Location not available', [pos.error], renderKiosk);
-  const integrity = window.TSGNative.mockLocationCheck ? await window.TSGNative.mockLocationCheck() : { ok: false };
+  if (kioskBusy) return; // a double tap on a tile started two camera sessions
+  kioskBusy = true;
+  clearTimeout(kioskIdleTimer);
   try {
-    const r = await window.Api.kioskPunch({ workerId, lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, selfieDataUrl: await shrinkDataUrl(selfie.dataUrl, 960, 0.8),
-      integrity: integrity.ok ? { mock: !!integrity.mock, legacyMockSetting: !!integrity.legacyMockSetting } : null });
+    const selfie = await scanFaceForPunch();
+    if (!selfie.ok) { if (!selfie.cancelled) toast(selfie.error, 'error'); return renderKiosk(); }
+    // No GPS on the tablet: it is bound to its site (server uses the site's position).
+    // A fresh indoor fix took up to 15 s per worker and often failed outright.
+    renderShell(`<div class="card center-card">${spinnerRow(bi('चेहरा मिलाया जा रहा है…', 'Checking face…'))}</div>`);
+    const r = await window.Api.kioskPunch({ workerId, selfieDataUrl: await shrinkDataUrl(selfie.dataUrl, 960, 0.8), livenessFrameDataUrl: selfie.livenessFrameDataUrl || undefined });
     const el = showResult(true, r.type === 'in' ? 'पंच इन हो गया' : 'पंच आउट हो गया', r.type === 'in' ? 'Punched in' : 'Punched out', [esc(r.worker), `${bi('समय', 'Time')}: <b>${fmtTime(r.ts)}</b>`], renderKiosk);
     setTimeout(() => { if (el.isConnected) el.querySelector('.result-close').onclick(); }, 6000); // next person
   } catch (e) {
     const d = e.data || {};
     const [hi, en] = BLOCK_REASON[d.reason] || ['पंच नहीं हुआ', 'Punch not saved'];
-    const el = showResult(false, hi, en, [esc(e.message)], renderKiosk);
+    // Second line tells the guard what to do, not just what failed.
+    const el = showResult(false, hi, en, [esc(e.message), bi('दोबारा कोशिश करें या गार्ड/साइट HR को बताएँ', 'Try again, or tell the guard / Site HR')], renderKiosk);
     setTimeout(() => { if (el.isConnected) el.querySelector('.result-close').onclick(); }, 8000);
-  }
+  } finally { kioskBusy = false; }
+}
+// Kiosk housekeeping: the candidate screen must not sit showing the previous person's
+// photos, and the tablet must never sleep or need relaunching after a reboot.
+let kioskIdleTimer = null;
+function kioskArmIdle() {
+  clearTimeout(kioskIdleTimer);
+  kioskIdleTimer = setTimeout(() => { if (location.hash === '#/kiosk' && !document.querySelector('.scan-overlay')) renderKiosk(); }, 30000);
+}
+function kioskNative(on) {
+  const n = window.TSGNative || {};
+  try { if (n.setKeepAwake) n.setKeepAwake(on); } catch (e) { /* older native bundle */ }
+  try { if (n.setKioskMode) n.setKioskMode(on); } catch (e) { /* older native bundle */ }
 }
 
 // Admin: set up gate tablets (kiosks.manage).

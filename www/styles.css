@@ -462,6 +462,7 @@ body.scanning-active #app {
   color: #fff; font-weight: 700; font-size: 15px; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
 }
 .scan-cancel { position: absolute; bottom: 56px; left: 50%; transform: translateX(-50%); }
+.scan-shutter { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%); min-width: 220px; font-size: 18px; }
 
 /* ---- Registration wizard (BRD §10): Hindi first, English below; picture tiles ---- */
 .bi-hi { display: block; }

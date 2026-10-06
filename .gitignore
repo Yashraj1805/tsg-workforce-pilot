@@ -13,8 +13,14 @@ android/captures/
 android/.externalNativeBuild/
 android/.cxx/
 
-# Built APKs (rebuild locally with `npm run apk`)
+# Built APKs (rebuild locally with `npm run apk` / `npm run apk:release`)
 *.apk
+*.aab
+
+# Release signing secrets (keystore lives outside the repo in C:\Users\<you>\tsg-keys)
+android/keystore.properties
+*.jks
+*.keystore
 
 # Debug/test screenshots, not app source
 tsg_scan*.png

@@ -54,12 +54,22 @@ async function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', 'X-Device-Id': getDeviceId(), ...(opts.headers || {}) };
   if (session && session.token) headers.Authorization = 'Bearer ' + session.token;
 
+  // No network at all → fail at once instead of hanging on a dead socket.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new ApiError('No internet connection', 0);
+  // Every call has a deadline: a stalled 4G socket otherwise leaves the worker on a
+  // spinner for minutes. Image/AI calls get longer (face checks can take 30–60 s).
+  const timeoutMs = opts.timeoutMs || (/\/(punch|kyc|face-detect|kiosk\/punch|kiosk\/face-detect|vendor-kyc|aadhaar|pan)/.test(path) ? 90000 : 25000);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res;
   try {
-    res = await fetch(base + path, { ...opts, headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
+    res = await fetch(base + path, { ...opts, headers, body: opts.body ? JSON.stringify(opts.body) : undefined, signal: ctrl.signal });
   } catch (e) {
+    clearTimeout(timer);
+    if (e && e.name === 'AbortError') throw new ApiError('The server is taking too long — check your network and try again', 0, { timeout: true });
     throw new ApiError('Could not reach the server. Check the API address and that your phone and the server are on the same network.', 0);
   }
+  clearTimeout(timer);
   let body = null;
   try { body = await res.json(); } catch (e) { /* no body */ }
   if (!res.ok) {
@@ -118,7 +128,8 @@ const Api = {
   setReportingManager:(id, manager) => apiFetch(`/api/workers/${id}/reporting-manager`, { method: 'PUT', body: manager }),
   listReportingManagers: () => apiFetch('/api/workers/meta/reporting-managers'),
   sendBackWorker: (id, reason) => apiFetch(`/api/workers/${id}/send-back`, { method: 'POST', body: { reason } }),
-  rejectWorker: (id) => apiFetch(`/api/workers/${id}/reject`, { method: 'POST' }),
+  rejectWorker: (id, reason) => apiFetch(`/api/workers/${id}/reject`, { method: 'POST', body: { reason } }),
+  punchSelfie: (id) => apiFetch(`/api/punches/${id}/selfie`),
 
   // ---- KYC ----
   digilockerInit: (redirectUrl) => apiFetch('/api/kyc/digilocker/init', { method: 'POST', body: { redirectUrl } }),

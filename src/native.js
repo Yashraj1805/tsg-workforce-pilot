@@ -210,6 +210,26 @@ async function deviceClock() {
   catch (err) { return { ok: false, error: (err && err.message) || 'unavailable' }; }
 }
 
+// ---- Gate tablet / kiosk mode ----
+// Hold the screen on while the gate tablet is on duty (FLAG_KEEP_SCREEN_ON). On the
+// web / desktop there is no native window: resolves { ok: false }.
+async function setKeepAwake(on) {
+  try { return { ok: true, ...(await DeviceIntegrity.setKeepAwake({ on: !!on })) }; }
+  catch (err) { return { ok: false, error: (err && err.message) || 'unavailable' }; }
+}
+// Persist kiosk mode natively so BootReceiver relaunches the app after a reboot or an
+// app update. Returns overlayPermission:false on Android 10+ until "Display over other
+// apps" is granted (needed for the auto-start); call requestOverlayPermission() then.
+async function setKioskMode(on) {
+  try { return { ok: true, ...(await DeviceIntegrity.setKioskMode({ on: !!on })) }; }
+  catch (err) { return { ok: false, error: (err && err.message) || 'unavailable' }; }
+}
+// Opens Settings > "Display over other apps" for this app (one-time kiosk setup).
+async function requestOverlayPermission() {
+  try { return { ok: true, ...(await DeviceIntegrity.requestOverlayPermission()) }; }
+  catch (err) { return { ok: false, error: (err && err.message) || 'unavailable' }; }
+}
+
 async function getPosition() {
   try {
     const perm = await Geolocation.requestPermissions().catch(() => null);
@@ -238,4 +258,4 @@ async function minimizeApp() {
   try { await App.minimizeApp(); } catch (err) { /* web/dev fallback: no-op */ }
 }
 
-window.TSGNative = { mockLocationCheck, deviceClock, takeSelfie, scanQrCode, scanQrFromPhoto, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };
+window.TSGNative = { mockLocationCheck, deviceClock, setKeepAwake, setKioskMode, requestOverlayPermission, takeSelfie, scanQrCode, scanQrFromPhoto, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };

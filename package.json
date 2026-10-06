@@ -6,7 +6,8 @@
   "scripts": {
     "build:native": "esbuild src/native.js --bundle --outfile=www/native-bundle.js --format=iife --platform=browser",
     "sync": "npm run build:native && npx cap sync android",
-    "apk": "npm run sync && cd android && (cmd //c gradlew.bat assembleDebug || ./gradlew assembleDebug)"
+    "apk": "npm run sync && cd android && (cmd //c gradlew.bat assembleDebug || ./gradlew assembleDebug)",
+    "apk:release": "npm run sync && cd android && (cmd //c gradlew.bat assembleRelease || ./gradlew assembleRelease)"
   },
   "keywords": [],
   "author": "",

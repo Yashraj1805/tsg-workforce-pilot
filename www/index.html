@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="color-scheme" content="light" />
+  <!-- Defence in depth for the HR portal: no remote scripts/objects/frames ever; images
+       only local or data:/blob: (photos); the API host is set at runtime so connect-src
+       stays open. Inline handlers are still used by the templates, hence 'unsafe-inline'. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; font-src 'self' data:; media-src 'self' blob: data:; connect-src *; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'" />
   <title>TSG Workforce (Pilot)</title>
   <link rel="stylesheet" href="vendor/fonts/fonts.css" />
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />

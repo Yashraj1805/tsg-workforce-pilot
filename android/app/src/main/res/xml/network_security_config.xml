@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network security policy (Android 7.0+; android:usesCleartextTraffic covers 6.0 and below).
+
+  Default: HTTPS only. The production backend must have a real TLS certificate.
+
+  Dev exceptions: plain HTTP is allowed only for the loopback / emulator hosts below.
+  The network security config cannot express CIDR ranges, so a LAN dev backend on a
+  10.x.x.x / 192.168.x.x address CANNOT be whitelisted wholesale here. If a developer
+  needs cleartext to one specific LAN IP, add it as a <domain> entry under this
+  domain-config temporarily (and remove it before shipping), or put the dev backend
+  behind TLS (mkcert / a real hostname) instead.
+
+  Note: Capacitor serves the bundled web app from https://localhost via an in-WebView
+  scheme handler; that never touches the network, so it is unaffected by this policy.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <!-- Android emulator alias for the host machine -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
