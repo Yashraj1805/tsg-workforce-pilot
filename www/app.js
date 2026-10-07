@@ -2744,6 +2744,7 @@ async function gateSearch() {
 // Paired once with a code from HR. Worker types the last 4 digits of their mobile, taps
 // their own photo, looks at the camera. The server checks the face positively matches.
 function renderKioskPair() {
+  loginState = { step: 'kioskPair' }; // so the hardware back button returns to the chooser
   renderShell(`
     <div class="card center-card">
       <h3>🖥️ Gate tablet setup</h3>
@@ -2758,6 +2759,7 @@ async function kioskPairNow() {
   try {
     const r = await window.Api.kioskPair(fieldVal('kp_code').trim());
     setSessionData({ token: r.token, role: 'kiosk', kiosk: r.kiosk });
+    loginState = {};
     location.hash = '#/kiosk'; render();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -3402,14 +3404,20 @@ window.addEventListener('error', (e) => {
 // location.hash, so there's often no history entry at all. This owns every back
 // press explicitly instead of relying on that default.
 function handleBackButton() {
+  // A paired gate tablet owns the whole screen: back never leaves or minimizes it.
+  const kioskSession = getSession();
+  if (kioskSession && kioskSession.role === 'kiosk') { if (location.hash !== '#/kiosk') { location.hash = '#/kiosk'; render(); } return; }
   // Login sub-steps never touch location.hash, so they have to be checked first,
   // independent of whatever the current hash happens to be.
   if (loginState && loginState.step === 'otp') {
     if (loginState.mobile !== undefined) startWorkerLogin(); else startHrLogin();
     return;
   }
-  if (loginState && (loginState.step === 'mobile' || loginState.step === 'email')) {
+  if (loginState && ['mobile', 'email', 'password', 'kioskPair'].includes(loginState.step)) {
     loginState = {};
+    // A device already locked to a role has nothing behind its login screen - minimize.
+    // Otherwise go back to the "who is this device for?" chooser.
+    if (getAppMode()) { window.TSGNative.minimizeApp(); return; }
     location.hash = '#/'; render();
     return;
   }
