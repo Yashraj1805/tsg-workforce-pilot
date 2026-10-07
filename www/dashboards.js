@@ -1,4 +1,4 @@
-// Role dashboards. Every admin role gets its own home screen — the same server data
+// Role dashboards. Every admin role gets its own home screen - the same server data
 // (already scoped per role by rbac.js) composed around what that role actually does
 // first thing in the morning, instead of one generic stat grid for everyone.
 //
@@ -61,7 +61,7 @@ function dashPeople(rows, { title, emptyText, limit = 6, showAll } = {}) {
       <h3>${title}</h3>
       ${rows.length === 0 ? emptyState(emptyText || 'No workers in your scope yet.', 'user') : shown.map(({ w, st }) => `
         <div class="dash-person" onclick="viewWorker('${w.id}')">
-          ${w.photo_data_url ? `<img src="${esc(w.photo_data_url)}" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`}
+          ${w.photo_data_url ? `<img src="${esc(w.photo_data_url)}" alt="" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`}
           <div class="dash-person-text"><b>${esc(w.name || w.mobile)}</b><span class="muted small">${esc(w.designation || w.location_name || '')}</span></div>
           <span class="dash-dot ${dot[st.status] || ''}"></span><span class="dash-person-status small">${line(st)}</span>
         </div>`).join('')}
@@ -81,7 +81,7 @@ function dashAttention(blocked, risky) {
   return `
     <div class="card">
       <h3>Needs attention</h3>
-      ${items.length === 0 ? emptyState('Nothing flagged today — all punches clean.', 'shield') : items.map(({ p, badge }) => `
+      ${items.length === 0 ? emptyState('Nothing flagged today - all punches clean.', 'shield') : items.map(({ p, badge }) => `
         <div class="dash-person" onclick="viewWorker('${p.worker_id}')">
           ${thumbHtml(p.selfie_data_url)}
           <div class="dash-person-text"><b>${esc(p.worker_name || p.worker_id)}</b><span class="muted small">${p.type.toUpperCase()} · ${new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
@@ -154,10 +154,10 @@ function renderSiteHrDashboard() {
       const transfersIn = requests.filter(r => r.type === 'transfer' && r.status === 'pending');
       const tasks = [
         dashTask(missedOut.length, 'calendar', 'Punched in, not out', 'Raise a missed-punch request before day end', '#/hr/attendance', 'warn'),
-        dashTask(unfinished.length, 'user', 'Registrations not finished', 'Drafts and sent-back — call the worker in', '#/hr/workers', 'warn'),
+        dashTask(unfinished.length, 'user', 'Registrations not finished', 'Drafts and sent-back - call the worker in', '#/hr/workers', 'warn'),
         dashTask(regsPending.length, 'doc', 'Regularisations with Central HR', 'Raised, not yet decided', '#/hr/regularisations', ''),
         dashTask(transfersIn.length, 'inbox', 'Transfers to accept at this site', 'Worker moving here from another site', '#/hr/requests', 'primary'),
-        dashTask(awaitingCentral.length, 'check', 'Sent to Central HR for approval', 'Nothing to do — waiting', '#/hr/approvals', ''),
+        dashTask(awaitingCentral.length, 'check', 'Sent to Central HR for approval', 'Nothing to do - waiting', '#/hr/approvals', ''),
       ].join('');
       renderShell(`
         ${dashHero({ title: esc(site), pct: pctOf(d) })}
@@ -169,7 +169,7 @@ function renderSiteHrDashboard() {
         ${dashRow([{ value: d.active, label: 'On site' }, { value: d.punchedIn, label: 'In' }, { value: d.punchedOut, label: 'Out' }, { value: notIn.length, label: 'Not yet in', href: '#/hr/attendance' }, { value: d.blocked, label: 'Blocked', href: '#/hr/exceptions' }])}
         <div class="card">
           <h3>To do today</h3>
-          ${tasks || emptyState('Nothing waiting on you — all caught up.', 'check')}
+          ${tasks || emptyState('Nothing waiting on you - all caught up.', 'check')}
         </div>
         ${dashPeople(notIn, { title: 'Not punched in yet', emptyText: 'Everyone on site has punched in.', showAll: '#/hr/attendance' })}
       `);
@@ -198,7 +198,7 @@ function renderManagerDashboard() {
         <div class="dash-loc-head"><h3 style="margin:0">${title}</h3><span class="badge ${tone}">${rows.length}</span></div>
         ${rows.length === 0 ? `<p class="muted small" style="margin:8px 0 0">${empty}</p>` : rows.map(({ w, st }) => `
           <div class="dash-person" onclick="viewWorker('${w.id}')">
-            ${w.photo_data_url ? `<img src="${esc(w.photo_data_url)}" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`}
+            ${w.photo_data_url ? `<img src="${esc(w.photo_data_url)}" alt="" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`}
             <div class="dash-person-text"><b>${esc(w.name || w.mobile)}</b><span class="muted small">${esc(w.designation || '')}${w.vendor_name ? ' · ' + esc(w.vendor_name) : ''}</span></div>
             <span class="dash-person-status small">${st.inTime ? 'In ' + fmtTime(st.inTime) : ''}${st.outTime ? ' · Out ' + fmtTime(st.outTime) : ''}</span>
           </div>`).join('')}
@@ -213,7 +213,7 @@ function renderManagerDashboard() {
         { icon: 'calendar', label: 'Past days', onclick: "location.hash='#/hr/attendance';render()" },
         { icon: 'doc', label: 'Excel', onclick: "location.hash='#/hr/reports';render()" },
       ])}
-      ${myReqs.length ? `<div class="card"><h3>My open requests</h3>${myReqs.map(r => `<div class="dash-kv"><span>${esc(r.worker_name)} — ${r.type}</span><span class="badge badge-warn">${r.status === 'accepted' ? 'with Central HR' : 'pending'}</span></div>`).join('')}</div>` : ''}
+      ${myReqs.length ? `<div class="card"><h3>My open requests</h3>${myReqs.map(r => `<div class="dash-kv"><span>${esc(r.worker_name)} - ${r.type}</span><span class="badge badge-warn">${r.status === 'accepted' ? 'with Central HR' : 'pending'}</span></div>`).join('')}</div>` : ''}
     `);
   });
 }
@@ -233,7 +233,7 @@ function renderVendorDashboard() {
         <div class="dash-loc-head"><h3 style="margin:0">Payable · ${month}</h3>${bill ? `<span class="badge ${bill.locked ? 'badge-ok' : 'badge-warn'}">${bill.locked ? 'Final' : 'Provisional'}</span>` : ''}</div>
         <div class="dash-bill-big"><b>${mine ? mine.systemDays : 0}</b><span>system days${mine ? ` across ${mine.workers} worker${mine.workers === 1 ? '' : 's'}` : ''}</span></div>
         ${mine && mine.invoiceDays != null ? `<div class="dash-kv"><span>Your invoice</span><b>${mine.invoiceDays} days</b></div>
-          <div class="dash-kv"><span>Difference</span><b style="color:${mine.gap > 0 ? 'var(--bad)' : mine.gap < 0 ? 'var(--warn)' : 'var(--accent-dark)'}">${mine.gap > 0 ? '+' : ''}${mine.gap}${mine.gap === 0 ? ' · matches' : ' days'}</b></div>` : `<p class="muted small">${bill && bill.locked ? 'Finance has not entered your invoice yet.' : 'Month not locked — days can still change until Central HR locks it.'}</p>`}
+          <div class="dash-kv"><span>Difference</span><b style="color:${mine.gap > 0 ? 'var(--bad)' : mine.gap < 0 ? 'var(--warn)' : 'var(--accent-dark)'}">${mine.gap > 0 ? '+' : ''}${mine.gap}${mine.gap === 0 ? ' · matches' : ' days'}</b></div>` : `<p class="muted small">${bill && bill.locked ? 'Finance has not entered your invoice yet.' : 'Month not locked - days can still change until Central HR locks it.'}</p>`}
         <a href="#/hr/billing" class="link-btn small">Day-wise breakup →</a>
       </div>
       ${dashRow([{ value: d.punchedIn, label: 'In today' }, { value: absent.length, label: 'Not in', href: '#/hr/attendance' }, { value: d.blocked, label: 'Blocked', href: '#/hr/exceptions' }, { value: pendingReg, label: 'Registering' }])}
@@ -285,9 +285,9 @@ function renderFinanceDashboard() {
       ${dashHero({ title: 'Month-end', subtitle: `<input type="month" class="input dash-month" value="${month}" max="${todayStr(Date.now()).slice(0, 7)}" onchange="window._financeDashMonth=this.value;renderFinanceDashboard()" />`, big: totalDays, bigLabel: 'payable days' })}
       <div class="card">
         <h3>Checklist · ${month}</h3>
-        ${step(bill.locked, 'Attendance locked by Central HR', bill.locked ? `Locked ${bill.lock && bill.lock.locked_at ? new Date(bill.lock.locked_at).toLocaleDateString() : ''}` : 'Waiting — invoices can be entered only after this')}
+        ${step(bill.locked, 'Attendance locked by Central HR', bill.locked ? `Locked ${bill.lock && bill.lock.locked_at ? new Date(bill.lock.locked_at).toLocaleDateString() : ''}` : 'Waiting - invoices can be entered only after this')}
         ${step(rows.length > 0 && missing.length === 0, `Invoice days entered · ${entered.length}/${rows.length} vendors`, missing.length ? missing.map(r => esc(r.vendorName)).join(', ') + ' pending' : rows.length ? 'All vendors entered' : 'No vendors with attendance this month')}
-        ${step(rows.length > 0 && missing.length === 0 && gaps.length === 0, gaps.length ? `${gaps.length} vendor${gaps.length === 1 ? '' : 's'} with a gap` : 'Gaps resolved', gaps.length ? `Over-billed total: +${over} days — reconcile before payment` : 'Every entered invoice matches system days')}
+        ${step(rows.length > 0 && missing.length === 0 && gaps.length === 0, gaps.length ? `${gaps.length} vendor${gaps.length === 1 ? '' : 's'} with a gap` : 'Gaps resolved', gaps.length ? `Over-billed total: +${over} days - reconcile before payment` : 'Every entered invoice matches system days')}
       </div>
       ${dashTiles([
         { icon: 'ledger', value: missing.length, label: 'Invoices to enter', tone: missing.length ? 'warn' : 'ok', href: '#/hr/billing' },
@@ -333,7 +333,7 @@ function renderSecurityDashboard() {
 }
 
 // ---- System Admin (BRD: masters, users, gate tablets; no worker data). Home is the
-// setup state of the system — what's configured, what isn't. ----
+// setup state of the system - what's configured, what isn't. ----
 function renderAdminDashboard() {
   const s = requireHr(); if (!s) return;
   withLoading(() => Promise.all([window.Api.listVendors(), window.Api.listLocations(), window.Api.listAdminUsers(), fetchIfAllowed('kiosks.manage', () => window.Api.listKiosks())]), ([vendors, locations, users, kiosks]) => {

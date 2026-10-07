@@ -1,11 +1,11 @@
-// Main UI / router for the TSG Workforce app. Talks to a real backend (see api.js) —
+// Main UI / router for the TSG Workforce app. Talks to a real backend (see api.js) -
 // every screen that shows data now fetches it over the network, so this file is built
 // around async render functions with explicit loading and error states, instead of the
 // old instant localStorage reads.
 
 const GPS_ACCURACY_LIMIT_M = 100; // fallback if a location has no accuracy_limit set
 // getApiBase/setApiBase/getSession/setSessionData/clearSessionData/getDeviceId are already
-// global (api.js declares them as top-level functions), so they're callable here directly —
+// global (api.js declares them as top-level functions), so they're callable here directly -
 // redeclaring them via `const {...} = window.ApiSession` threw "Identifier already declared"
 // on every load, since classic <script> tags share one global lexical scope and you can't
 // mix a function-style global binding with a lexical const of the same name.
@@ -15,7 +15,7 @@ function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({ '&': '
 
 // ---------------- Voice (BRD design rule 2, R11) ----------------
 // Reads a screen or a result aloud in the worker's chosen language (Hindi by default).
-// On by default for worker screens — "Many workers can read very little" — and can be
+// On by default for worker screens - "Many workers can read very little" - and can be
 // switched off from the worker menu. `force` speaks even when voice is off (Listen again).
 const VOICE_KEY = 'tsg_voice';
 function voiceOn() { try { return localStorage.getItem(VOICE_KEY) !== 'off'; } catch (e) { return true; } }
@@ -30,7 +30,7 @@ function speak(hi, en, force) {
 function stopVoice() { if (window.TSGNative && window.TSGNative.stopSpeaking) window.TSGNative.stopSpeaking(); }
 
 // Design rule 9 (low-cost phones, weak networks): photos are shrunk on the phone before
-// upload — a full-resolution camera frame is several MB.
+// upload - a full-resolution camera frame is several MB.
 function shrinkDataUrl(dataUrl, maxDim, quality) {
   return new Promise((resolve) => {
     const img = new Image();
@@ -44,7 +44,7 @@ function shrinkDataUrl(dataUrl, maxDim, quality) {
     };
     img.onerror = () => resolve(dataUrl);
     // A 12 MP frame can take >4 s to decode on a 2 GB phone; bailing out early meant the
-    // full-size original (≈1 MB) was uploaded and stored — defeating the whole shrink.
+    // full-size original (≈1 MB) was uploaded and stored - defeating the whole shrink.
     setTimeout(() => resolve(dataUrl), 15000); // never block an upload on a decoder that stalls
     img.src = dataUrl;
   });
@@ -87,7 +87,7 @@ const ICONS = {
 function icon(name) { return ICONS[name] || ''; }
 
 function avatarHtml(worker) {
-  if (worker.photo_data_url) return `<img src="${imgSrc(worker.photo_data_url)}" class="avatar" />`;
+  if (worker.photo_data_url) return `<img src="${imgSrc(worker.photo_data_url)}" alt="" class="avatar" />`;
   const initials = (worker.name || '?').trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
   return `<div class="avatar">${esc(initials)}</div>`;
 }
@@ -95,7 +95,7 @@ function avatarHtml(worker) {
 function emptyState(message, iconName) {
   return `<div class="empty-state"><div class="empty-icon">${icon(iconName || 'inbox')}</div><p>${message}</p></div>`;
 }
-// A thumbnail only when there's an actual image — a blocked punch can carry a selfie
+// A thumbnail only when there's an actual image - a blocked punch can carry a selfie
 // field that isn't a usable data: URL, which the bare <img> rendered as a broken icon.
 // Only a real JPEG/PNG data URL may become an <img src>; anything else (a worker-supplied
 // string with a quote in it, say) renders as no image instead of as markup.
@@ -104,7 +104,7 @@ function imgSrc(v) {
 }
 function thumbHtml(dataUrl) {
   // < 200 chars is a bare header with no pixels (seen on test rows), never a real photo.
-  return dataUrl && /^data:image\//.test(dataUrl) && dataUrl.length > 200 ? `<img src="${esc(dataUrl)}" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`;
+  return dataUrl && /^data:image\//.test(dataUrl) && dataUrl.length > 200 ? `<img src="${esc(dataUrl)}" alt="" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`;
 }
 // Punch block reasons are stored as codes (punches.js); HR reads words.
 const REASON_LABELS = {
@@ -148,11 +148,56 @@ function toast(message, type) {
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 250); }, 3200);
 }
 
+// ---------------- Dialog (replaces window.confirm / window.prompt) ----------------
+// askModal({ title, body, input, placeholder, confirmLabel, danger, typed })
+//   → resolves the typed text (input mode) or true (confirm mode); null/false on cancel.
+// `typed: 'WORD'` makes an irreversible action (blacklist, unlock a locked month) require
+// the word to be typed before the confirm button enables.
+function askModal(opts) {
+  return new Promise((resolve) => {
+    const o = opts || {};
+    const back = document.createElement('div');
+    back.className = 'dialog-backdrop';
+    back.innerHTML = `
+      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+        <h3 id="dlgTitle">${esc(o.title || '')}</h3>
+        ${o.body ? `<p>${esc(o.body)}</p>` : ''}
+        ${o.input ? `<${o.multiline ? 'textarea' : 'input'} id="dlgInput" class="input" ${o.multiline ? 'rows="3"' : ''} placeholder="${esc(o.placeholder || '')}" autocomplete="off">${o.multiline ? '' : ''}${o.multiline ? '</textarea>' : ''}` : ''}
+        ${o.typed ? `<div class="dialog-typed">${esc(biText('पुष्टि के लिए टाइप करें', 'Type to confirm'))}: <code>${esc(o.typed)}</code></div><input id="dlgTyped" class="input" autocomplete="off" autocapitalize="characters" placeholder="${esc(o.typed)}" />` : ''}
+        <div class="dialog-actions">
+          <button class="btn secondary" id="dlgCancel">${t('cancel')}</button>
+          <button class="btn ${o.danger ? 'danger' : 'primary'}" id="dlgOk" ${o.typed ? 'disabled' : ''}>${esc(o.confirmLabel || (o.input ? t('save') : 'OK'))}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(back);
+    const input = back.querySelector('#dlgInput'), typed = back.querySelector('#dlgTyped'), ok = back.querySelector('#dlgOk');
+    const close = (v) => { back.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') close(o.input ? null : false); if (e.key === 'Enter' && !o.multiline && !ok.disabled && document.activeElement !== back.querySelector('#dlgCancel')) submit(); };
+    const submit = () => {
+      if (o.typed && (typed.value.trim().toUpperCase() !== String(o.typed).toUpperCase())) return;
+      if (o.input) { const v = input.value.trim(); if (o.required !== false && !v) { input.focus(); input.style.borderColor = 'var(--bad)'; return; } return close(v); }
+      close(true);
+    };
+    if (typed) typed.addEventListener('input', () => { ok.disabled = typed.value.trim().toUpperCase() !== String(o.typed).toUpperCase(); });
+    ok.onclick = submit;
+    back.querySelector('#dlgCancel').onclick = () => close(o.input ? null : false);
+    back.addEventListener('click', (e) => { if (e.target === back) close(o.input ? null : false); });
+    document.addEventListener('keydown', onKey);
+    setTimeout(() => (input || typed || ok).focus(), 30);
+  });
+}
+const askConfirm = (title, body, opts) => askModal({ title, body, ...(opts || {}) });
+const askReason = (title, body, opts) => askModal({ title, body, input: true, multiline: true, placeholder: biText('कारण लिखें', 'Write the reason'), ...(opts || {}) });
+
 // ---------------- Async render helper ----------------
 // Shows a loading spinner immediately, runs `fetcher`, then either renders the result
 // via `onSuccess` or shows a retry state on failure (e.g. server unreachable).
 async function withLoading(fetcher, onSuccess, loadingLabel) {
-  renderShell(`<div class="card">${spinnerRow(loadingLabel || 'Loading…')}</div>`);
+  // Skeleton in the shape of a typical screen (title, two lines, a block) instead of a
+  // bare spinner; the label stays for screen readers and for slow networks.
+  renderShell(`<div class="card"><div class="skeleton-card" role="status" aria-live="polite" aria-label="${esc(loadingLabel || 'Loading')}">
+      <div class="skeleton title"></div><div class="skeleton line"></div><div class="skeleton line short"></div><div class="skeleton block"></div>
+      <div class="skeleton-label">${esc(loadingLabel || bi('लोड हो रहा है…', 'Loading…'))}</div></div></div>`);
   try {
     const data = await fetcher();
     onSuccess(data);
@@ -191,7 +236,7 @@ setInterval(() => {
 }, 30000);
 
 // ---------------- Smart Alerts / Insights engine ----------------
-// Deterministic, computed-on-the-fly pattern detection over live backend data — the
+// Deterministic, computed-on-the-fly pattern detection over live backend data - the
 // "AI Time Guard" style anomaly flags. No ML model involved; a production version
 // would run equivalent checks server-side, likely backed by a trained model.
 
@@ -242,7 +287,7 @@ function computeTimeGuardFlags({ workers, locations, punches, regularisations })
       const st = attendanceStatusForDay(wPunches, d);
       if (st.hours && st.hours > 10) {
         flags.push({ type: 'overtime_risk', severity: 'warn', workerId: w.id, ts: st.outTime || now,
-          message: `Worked ${st.hours}h on ${d} — check for a missed punch-out or approve overtime` });
+          message: `Worked ${st.hours}h on ${d} - check for a missed punch-out or approve overtime` });
       }
     }
 
@@ -251,7 +296,7 @@ function computeTimeGuardFlags({ workers, locations, punches, regularisations })
     const regRate = regThisMonth.length / punchDaysThisMonth;
     if (regThisMonth.length >= 2 && regRate > 0.02) {
       flags.push({ type: 'high_regularisation', severity: 'warn', workerId: w.id, ts: now,
-        message: `${regThisMonth.length} regularisations this month (${Math.round(regRate * 100)}% of days) — above the BRD's 2% target` });
+        message: `${regThisMonth.length} regularisations this month (${Math.round(regRate * 100)}% of days) - above the BRD's 2% target` });
     }
   });
 
@@ -264,7 +309,7 @@ function computeTimeGuardFlags({ workers, locations, punches, regularisations })
       const d = haversineMeters(a.lat, a.lng, b.lat, b.lng);
       if (d < 5) {
         flags.push({ type: 'shared_device', severity: 'bad', workerId: a.worker_id, ts: b.ts,
-          message: `${esc(nameById[a.worker_id])} and ${esc(nameById[b.worker_id])} punched ${Math.round((b.ts - a.ts) / 1000)}s apart at nearly the same GPS point (${d.toFixed(1)}m) — check for a shared device` });
+          message: `${esc(nameById[a.worker_id])} and ${esc(nameById[b.worker_id])} punched ${Math.round((b.ts - a.ts) / 1000)}s apart at nearly the same GPS point (${d.toFixed(1)}m) - check for a shared device` });
       }
     }
   }
@@ -296,7 +341,7 @@ function computeSmartInsights({ workers, locations, punches, flags }) {
   if (sortedLocs.length) lines.push(`${sortedLocs[0][0]} has the most punch-ins today (${sortedLocs[0][1]}).`);
   if (blocked7d > 0) lines.push(`${blocked7d} blocked punch attempt${blocked7d > 1 ? 's' : ''} in the last 7 days (${Math.round(blocked7d / total7d * 100)}% of all attempts).`);
   lines.push(flags.length > 0
-    ? `${flags.length} pattern alert${flags.length > 1 ? 's' : ''} need review — see AI Time Guard.`
+    ? `${flags.length} pattern alert${flags.length > 1 ? 's' : ''} need review - see AI Time Guard.`
     : `No unusual patterns detected in the last check.`);
   return { lines, byLocation: sortedLocs };
 }
@@ -325,7 +370,7 @@ function renderShell(innerHtml) {
     <header class="topbar">
       <div class="topbar-title" onclick="modeSwitchTap()">
         <div class="app-name">${t('appName')}</div>
-        ${s ? '' : `<div class="demo-badge">${getApiBase() ? esc(getApiBase().replace(/^https?:\/\//, '')) : t('demoBadge')}</div>`}
+        ${s ? '' : `<div class="demo-badge">${getApiBase() === DEFAULT_API_BASE ? esc(biText('कनेक्टेड ✓', 'Connected ✓')) : getApiBase() ? esc(getApiBase().replace(/^https?:\/\//, '')) : t('demoBadge')}</div>`}
       </div>
       <div class="topbar-actions">
         <div class="lang-seg" role="group" aria-label="Language">
@@ -366,7 +411,7 @@ function hasPerm(p) { const s = getSession(); return !!(s && s.permissions && s.
 // first three a role can open (among `nav: true`) become its bottom-nav tabs, the rest
 // go under "More".
 const ADMIN_SCREENS = [
-  // Role-tailored home screens — these replace the generic dashboard (below) for the
+  // Role-tailored home screens - these replace the generic dashboard (below) for the
   // one role each is built for, so that role never sees two dashboard tabs. Order matters:
   // adminHomeHash() lands on the FIRST visible entry, so a role's home must come first.
   { hash: '#/hr/dashboard', icon: 'shield', label: () => 'Gate', perms: ['punches.read'], nav: true, onlyRole: ['security'] },
@@ -397,10 +442,10 @@ const ADMIN_SCREENS = [
 const ADMIN_ROUTE_PERMS = { '#/hr/worker': ['workers.read'], '#/hr/more': [], '#/hr/logout-confirm': [] };
 // onlyRole: shown only to a listed role (a tailored dashboard built for that one role).
 // hiddenIfVisible: hidden only once one of the listed replacement screens is actually
-// visible (perms and all) — not just "this role has a replacement," so a role never
+// visible (perms and all) - not just "this role has a replacement," so a role never
 // ends up with zero dashboards if its replacement's permissions ever turn out not to
 // match what's actually granted (e.g. an RBAC edit later gives mis_finance a role
-// without billing.read) — the generic dashboard stays as a fallback in that case.
+// without billing.read) - the generic dashboard stays as a fallback in that case.
 function screenVisible(x) {
   const s = getSession();
   const role = s && s.role;
@@ -411,7 +456,7 @@ function screenVisible(x) {
 }
 function canOpenAdminRoute(hash) {
   // Several ADMIN_SCREENS entries can share a hash (one per role's tailored home), so
-  // the route is open if ANY of them is visible — .find() on the first one alone sent
+  // the route is open if ANY of them is visible - .find() on the first one alone sent
   // every HR role into a redirect loop the moment a second '#/hr/dashboard' entry existed.
   const screens = ADMIN_SCREENS.filter(x => x.hash === hash);
   if (screens.length) return screens.some(screenVisible);
@@ -453,7 +498,7 @@ function switchLang(l) { setLang(l); render(); }
 // ---------------- Splash / Server settings ----------------
 
 // A session that existed before device modes were introduced (e.g. a tablet paired
-// on an older build) has no mode recorded — adopt one from it, so an upgrade never
+// on an older build) has no mode recorded - adopt one from it, so an upgrade never
 // turns a locked tablet back into a three-door chooser.
 (function adoptModeFromExistingSession() {
   const s = getSession();
@@ -462,7 +507,7 @@ function switchLang(l) { setLang(l); render(); }
 
 function renderSplash() {
   loginState = {}; // reaching splash by any path (logout, settings save, back) resets any in-flight login sub-step
-  // A device that has signed in before goes straight to that mode's login — the
+  // A device that has signed in before goes straight to that mode's login - the
   // three-door chooser is only for a fresh install (or after "switch mode").
   const mode = getAppMode();
   if (mode === 'worker') return startWorkerLogin();
@@ -472,7 +517,7 @@ function renderSplash() {
   renderShell(`
     <div class="card center-card">
       <h2>${t('appName')}</h2>
-      <p class="muted small">${t('connectedTo')} ${esc(base)}</p>
+      <p class="muted small">${base === DEFAULT_API_BASE ? `${t('connectedTo')} TSG server ✓` : `${t('connectedTo')} ${esc(base.replace(/^https?:\/\//, ''))}`}</p>
       <p class="muted small" style="margin-top:14px">${bi('यह फ़ोन किसके लिए है? एक बार चुनें।', 'Who is this device for? Choose once.')}</p>
       <button class="btn primary block" onclick="startWorkerLogin()">${t('roleWorker')}</button>
       <button class="btn secondary block" onclick="startHrLogin()">${t('roleHr')}</button>
@@ -482,18 +527,18 @@ function renderSplash() {
   `);
 }
 // Hidden escape hatch: 7 taps on the app name within 3 s clears the device mode (and
-// any session) and brings the chooser back — for an admin re-purposing a phone or
+// any session) and brings the chooser back - for an admin re-purposing a phone or
 // un-pairing a tablet. Deliberately not a visible button on the kiosk.
 let modeTaps = [];
-function modeSwitchTap() {
+async function modeSwitchTap() {
   const now = Date.now();
   modeTaps = modeTaps.filter(ts => now - ts < 3000); modeTaps.push(now);
   if (modeTaps.length >= 7) {
     modeTaps = [];
-    // A gate tablet can only be un-paired by someone with an HR login — otherwise any
+    // A gate tablet can only be un-paired by someone with an HR login - otherwise any
     // worker at the gate could tap the title seven times and take the tablet offline.
     if (getAppMode() === 'kiosk') return renderKioskUnlock();
-    if (!confirm(biText('यह डिवाइस का मोड बदल देगा और साइन-आउट कर देगा। जारी रखें?', 'This resets which role this device is for and signs out. Continue?'))) return;
+    if (!(await askConfirm(biText('डिवाइस का मोड बदलें?', 'Change what this device is for?'), biText('यह साइन-आउट कर देगा और पहली स्क्रीन दोबारा दिखाएगा।', 'This signs out and shows the first screen again.'), { danger: true, confirmLabel: biText('बदलें', 'Change') }))) return;
     resetDeviceMode();
   }
 }
@@ -524,7 +569,7 @@ function renderKioskUnlock() {
       if (!r.token) throw new Error('Login failed');
       el.remove();
       if (kioskSession) setSessionData(kioskSession);
-      if (confirm(`Unlock as ${r.hrUser.name}? The tablet will need pairing again.`)) resetDeviceMode();
+      if (await askConfirm(`Unlock as ${r.hrUser.name}?`, 'The tablet leaves kiosk mode and will need pairing again.', { danger: true, confirmLabel: 'Unlock' })) resetDeviceMode();
     } catch (e) { toast(e.message, 'error'); }
   };
 }
@@ -582,7 +627,7 @@ function resendOtpButton(onclickJs, seconds) {
 let loginState = {};
 
 function startWorkerLogin() {
-  // Starting a fresh login means whatever session was in storage is being replaced —
+  // Starting a fresh login means whatever session was in storage is being replaced -
   // otherwise renderShell draws the old session's bottom nav under the login card.
   clearSessionData();
   loginState = { step: 'mobile' };
@@ -595,7 +640,7 @@ function startWorkerLogin() {
   `);
 }
 // Where the OTP went (the server picks WhatsApp first for a mobile, SMS if that fails),
-// plus the "send on SMS instead" escape hatch when it went by WhatsApp — the worker may
+// plus the "send on SMS instead" escape hatch when it went by WhatsApp - the worker may
 // have WhatsApp on a different number, or none at all.
 function otpSentLine(result, mobile, smsOnclick) {
   if (result.devOtp) return `<p class="muted small">${t('otpHint')}: ${result.devOtp}</p>`;
@@ -736,7 +781,7 @@ async function regConsentNext() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-// ---- 2 Face photo (screen 5: live camera only, one live face — checked by the server) ----
+// ---- 2 Face photo (screen 5: live camera only, one live face - checked by the server) ----
 function regPhoto() {
   const w = regState.worker;
   renderShell(`
@@ -744,7 +789,7 @@ function regPhoto() {
       ${regHeader(2, 'अपनी फोटो लें', 'Take your photo')}
       <p class="muted small">${bi('कैमरे की ओर सीधे देखें। फोटो में सिर्फ़ आप हों।', 'Look straight at the camera. Only you in the photo.')}</p>
       <div class="selfie-frame">
-        ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" class="selfie-preview" />` : `<div class="selfie-placeholder"><span class="icon-inline" style="width:28px;height:28px;margin:0 0 6px">${icon('camera')}</span></div>`}
+        ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" alt="" class="selfie-preview" />` : `<div class="selfie-placeholder"><span class="icon-inline" style="width:28px;height:28px;margin:0 0 6px">${icon('camera')}</span></div>`}
       </div>
       <button class="btn ${w.photo_data_url ? 'secondary' : 'primary'} block big" onclick="regCapturePhoto()">📷 ${w.photo_data_url ? bi('फिर से लें', 'Retake') : bi('फोटो लें', 'Take photo')}</button>
       ${regNav(1, null, 'renderRegStep(3)', !w.photo_data_url)}
@@ -758,18 +803,18 @@ async function regCapturePhoto() {
   if (await regSave({ photoDataUrl: small })) renderRegStep(2);
 }
 
-// ---- 3 Aadhaar QR (screen 6) — fills name, father's name, DOB, gender, address ----
+// ---- 3 Aadhaar QR (screen 6) - fills name, father's name, DOB, gender, address ----
 function regAadhaar() {
   const w = regState.worker;
   renderShell(`
     <div class="card">
       ${regHeader(3, 'आधार कार्ड', 'Aadhaar card')}
       ${w.aadhaar_qr_at
-        ? `<div class="kyc-status ok">✅ ${bi('आधार स्कैन हो गया', 'Aadhaar scanned')} — ${esc(w.aadhaar_masked || '')}</div>`
-        : `<p class="muted small">${bi('आधार कार्ड के QR की <b>फोटो लें</b> — आपकी जानकारी अपने-आप भर जाएगी। कार्ड सीधा रखें, QR फोटो में बड़ा दिखे, रोशनी अच्छी हो।', 'Take a <b>photo</b> of the QR on the Aadhaar card — your details fill in by themselves. Card flat, QR large in the photo, good light.')}</p>`}
-      ${regState.aadhaarNameWarning ? `<div class="gps-status bad">Name on Aadhaar is "${esc(regState.aadhaarNameWarning)}" — your name below must match it.
+        ? `<div class="kyc-status ok">✅ ${bi('आधार स्कैन हो गया', 'Aadhaar scanned')} - ${esc(w.aadhaar_masked || '')}</div>`
+        : `<p class="muted small">${bi('आधार कार्ड के QR की <b>फोटो लें</b> - आपकी जानकारी अपने-आप भर जाएगी। कार्ड सीधा रखें, QR फोटो में बड़ा दिखे, रोशनी अच्छी हो।', 'Take a <b>photo</b> of the QR on the Aadhaar card - your details fill in by themselves. Card flat, QR large in the photo, good light.')}</p>`}
+      ${regState.aadhaarNameWarning ? `<div class="gps-status bad">Name on Aadhaar is "${esc(regState.aadhaarNameWarning)}" - your name below must match it.
         <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">Use Aadhaar name</button></div>` : ''}
-      ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('लाइव स्कैनर QR नहीं पढ़ पाया (आधार का QR बहुत घना होता है)। नीचे वाले बटन से उसकी फोटो लें — वह काम करता है।', "The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button below — that one works.")}</div>` : ''}
+      ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('लाइव स्कैनर QR नहीं पढ़ पाया (आधार का QR बहुत घना होता है)। नीचे वाले बटन से उसकी फोटो लें - वह काम करता है।', "The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button below - that one works.")}</div>` : ''}
       <button class="btn primary block big" onclick="regPhotoAadhaarQr()">📷 ${w.aadhaar_qr_at ? bi('फिर से फोटो लें', 'Take the photo again') : bi('आधार QR की फोटो लें', 'Take a photo of the Aadhaar QR')}</button>
       <button class="btn secondary block" onclick="regScanAadhaar()">${bi('लाइव स्कैनर आज़माएँ', 'Try the live scanner instead')}</button>
       ${w.aadhaar_qr_at ? `
@@ -796,7 +841,7 @@ async function regScanAadhaar() {
   const scan = await window.TSGNative.scanQrCode();
   if (!scan.ok) {
     // The Aadhaar Secure QR is very dense and the live scanner often can't lock onto a
-    // printed card — offer the still-photo route rather than failing silently.
+    // printed card - offer the still-photo route rather than failing silently.
     regState.qrHelp = true;
     if (!scan.cancelled) toast(scan.error, 'error');
     renderRegStep(3);
@@ -821,7 +866,7 @@ function aadhaarQrAccepted(result) {
   regState.qrHelp = false;
   regState.worker = result.worker;
   // R05: names must match. The server won't block the scan (the typed name may just be
-  // a draft), but submit will — so say so now, with the Aadhaar name to copy.
+  // a draft), but submit will - so say so now, with the Aadhaar name to copy.
   regState.aadhaarNameWarning = result.nameMatches === false ? result.name : null;
   toast(`Aadhaar scanned (…${result.last4})`, result.nameMatches === false ? 'error' : 'success');
   renderRegStep(3);
@@ -844,11 +889,11 @@ function regPan() {
   renderShell(`
     <div class="card">
       ${regHeader(4, 'पैन कार्ड', 'PAN card')}
-      ${!w.aadhaar_verified ? `<div class="gps-status warn">${bi('आधार की OTP पुष्टि अभी बाकी है — पिछले स्टेप में करें।', 'Aadhaar OTP verification is still pending — do it in the previous step.')}
+      ${!w.aadhaar_verified ? `<div class="gps-status warn">${bi('आधार की OTP पुष्टि अभी बाकी है - पिछले स्टेप में करें।', 'Aadhaar OTP verification is still pending - do it in the previous step.')}
         <button class="btn secondary small" style="margin-top:6px" onclick="renderRegStep(3)">${bi('आधार पर जाएँ', 'Go to Aadhaar')}</button></div>` : ''}
       <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ ' + bi('पैन की पुष्टि हो गई', 'PAN verified') : '⏳ ' + bi('पैन की पुष्टि बाकी है', 'PAN not yet verified')}</div>
       ${!w.pan_verified ? `
-        ${w.pan_photo_data_url ? `<img src="${imgSrc(w.pan_photo_data_url)}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
+        ${w.pan_photo_data_url ? `<img src="${imgSrc(w.pan_photo_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
         ${regState.panRead ? `<div class="kyc-status">PAN read from photo: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
           <button class="btn primary block" onclick="verifyPan(true)">Yes, verify this PAN</button>` : ''}
         <button class="btn secondary block" onclick="regPanPhoto()">📷 ${w.pan_photo_data_url ? bi('पैन की फोटो फिर से लें', 'Retake PAN photo') : bi('पैन कार्ड की फोटो लें', 'Take photo of PAN card')}</button>
@@ -863,7 +908,7 @@ function regPan() {
           <button class="btn warn block" style="margin-top:8px" onclick="skipKycDev()">${t('devSkipButton')}</button>
         </div>` : ''}
       <details style="margin-top:12px"><summary class="link-btn small">${bi('बैंक पासबुक (अगर ज़रूरत हो)', 'Bank passbook (if needed)')}</summary>
-        ${w.bank_passbook_data_url ? `<img src="${imgSrc(w.bank_passbook_data_url)}" class="selfie-preview" style="border-radius:8px;max-height:120px" />` : ''}
+        ${w.bank_passbook_data_url ? `<img src="${imgSrc(w.bank_passbook_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:120px" />` : ''}
         <button class="btn secondary small" onclick="regPassbookPhoto()">📷 ${w.bank_passbook_data_url ? 'Retake' : 'Take photo'}</button>
       </details>
       ${regNav(3, null, 'renderRegStep(5)', !(w.aadhaar_verified && w.pan_verified))}
@@ -882,7 +927,7 @@ async function startDigilocker() {
     // No dedicated web callback endpoint exists for this pilot, so the worker
     // completes consent in the system browser then manually returns to the app and
     // taps "I've completed verification" to fetch the result using the request id
-    // we already hold — see tsg-workforce-backend/README for the real flow this
+    // we already hold - see tsg-workforce-backend/README for the real flow this
     // simplifies.
     const result = await window.Api.digilockerInit('https://www.google.com/');
     regState.digilockerId = result.id;
@@ -909,7 +954,7 @@ async function checkDigilockerComplete() {
     renderRegStep(4);
   } catch (e) { toast(e.message, 'error'); }
 }
-// R04: PAN by photo — the server reads the number (OCR) and the worker only confirms it.
+// R04: PAN by photo - the server reads the number (OCR) and the worker only confirms it.
 async function regPanPhoto() {
   const photo = await window.TSGNative.takeDocumentPhoto();
   if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
@@ -938,7 +983,7 @@ async function verifyPan(fromPhoto) {
     renderRegStep(4);
   } catch (e) { toast(e.message, 'error'); }
 }
-// Design rule 4: "bank passbook if needed" — optional.
+// Design rule 4: "bank passbook if needed" - optional.
 async function regPassbookPhoto() {
   const photo = await window.TSGNative.takeDocumentPhoto();
   if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
@@ -1014,18 +1059,18 @@ function regReview() {
 }
 function regReviewRender() {
   const w = regState.worker, o = regState.opts;
-  const label = (list, id) => { const x = list.find(i => i.id === id); return x ? `${x.hi || x.name_hi || ''} / ${x.en || x.name}` : '—'; };
+  const label = (list, id) => { const x = list.find(i => i.id === id); return x ? `${x.hi || x.name_hi || ''} / ${x.en || x.name}` : '-'; };
   const row = (hi, en, val, step) => `<tr><td class="muted">${bi(hi, en)}</td><td>${val}</td><td><button class="link-btn small" onclick="renderRegStep(${step})">✏️</button></td></tr>`;
   renderShell(`
     <div class="card">
       ${regHeader(8, 'जाँचें और भेजें', 'Check and submit')}
-      ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" class="avatar" style="width:80px;height:80px;display:block;margin:0 auto 10px" />` : ''}
+      ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" alt="" class="avatar" style="width:80px;height:80px;display:block;margin:0 auto 10px" />` : ''}
       <table class="tbl">
-        ${row('नाम', 'Name', esc(w.name || '—'), 3)}
-        ${row('आधार', 'Aadhaar', `${esc(w.aadhaar_masked || '—')} ${w.aadhaar_verified ? '✅' : '⏳'}`, 3)}
-        ${row('पैन', 'PAN', `${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '—'} ${w.pan_verified ? '✅' : '⏳'}`, 4)}
+        ${row('नाम', 'Name', esc(w.name || '-'), 3)}
+        ${row('आधार', 'Aadhaar', `${esc(w.aadhaar_masked || '-')} ${w.aadhaar_verified ? '✅' : '⏳'}`, 3)}
+        ${row('पैन', 'PAN', `${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '-'} ${w.pan_verified ? '✅' : '⏳'}`, 4)}
         ${row('काम', 'Job', esc(label(o.jobs, w.job_id)), 5)}
-        ${row('वेंडर / साइट', 'Vendor / site', `${esc((w.vendor && w.vendor.name) || '—')} / ${esc((w.location && w.location.name) || regState.siteName || '—')}`, 6)}
+        ${row('वेंडर / साइट', 'Vendor / site', `${esc((w.vendor && w.vendor.name) || '-')} / ${esc((w.location && w.location.name) || regState.siteName || '-')}`, 6)}
         ${row('पढ़ाई', 'Education', esc(label(o.education, w.qualification)), 7)}
         ${row('अनुभव', 'Experience', esc(label(o.experience, w.experience)), 7)}
       </table>
@@ -1116,7 +1161,7 @@ function renderWorkerHome() {
     else statusLine = `<div class="punch-status">${t('notPunched')}</div>`;
 
     renderShell(`
-      ${offline ? `<div class="gps-status warn" style="margin-bottom:10px">📵 ${bi('नेटवर्क नहीं है — साइट के अंदर पंच फ़ोन में सेव होगा', 'No network — a punch inside the site is saved on the phone')}</div>` : ''}
+      ${offline ? `<div class="gps-status warn" style="margin-bottom:10px">📵 ${bi('नेटवर्क नहीं है - साइट के अंदर पंच फ़ोन में सेव होगा', 'No network - a punch inside the site is saved on the phone')}</div>` : ''}
       ${queued.length ? `<div class="gps-status warn" style="margin-bottom:10px">⏳ ${bi(`${queued.length} पंच भेजना बाकी है`, `${queued.length} punch(es) waiting to be sent`)}</div>` : ''}
       <div class="card">
         <div class="profile-header">
@@ -1141,7 +1186,7 @@ function renderWorkerHome() {
     if (completedToday) speak('आज का काम पूरा हो गया', 'Day complete');
     else if (openIn) speak(`आपने ${fmtTime(openIn.ts)} पर पंच इन किया। जाते समय पंच आउट करें।`, `Punched in at ${fmtTime(openIn.ts)}. Punch out when you leave.`);
     else speak('पंच इन करने के लिए हरा बटन दबाएँ', 'Press the green button to punch in');
-    // BRD §11 screen 1: "Shows inside or outside site" — without an extra tap.
+    // BRD §11 screen 1: "Shows inside or outside site" - without an extra tap.
     if (!completedToday) checkMyLocation();
     if (queued.length && !offline) syncOfflinePunches();
   }, t('checkingLocation'));
@@ -1188,7 +1233,7 @@ async function checkMyLocation() {
 
 // ---- Hands-free punch selfie: live camera preview (native, behind the WebView) with
 // a circular guide overlay. Every ~1.2s the current frame is checked by Gemini for "is
-// a face framed here" (geminiClient.detectFace, server-side) — no shutter tap needed.
+// a face framed here" (geminiClient.detectFace, server-side) - no shutter tap needed.
 // Once detected, a full-quality frame is captured automatically and used as the punch
 // selfie, which then goes through the actual identity check (compareFaces) as part of
 // the punch itself. This detection step only answers "is a face here", never "whose".
@@ -1214,7 +1259,7 @@ function scanFaceForPunch() {
       document.body.classList.add('scanning-active');
       const overlay = createScanOverlay();
       // start() resolving doesn't guarantee the native camera session is actually
-      // ready to serve capture calls yet — confirmed on-device the first sample right
+      // ready to serve capture calls yet - confirmed on-device the first sample right
       // after start() can fail with "Camera is not running". A short settle delay
       // avoids that instead of just burning the first poll attempt on it every time.
       await new Promise((r) => setTimeout(r, 500));
@@ -1240,11 +1285,11 @@ function scanFaceForPunch() {
         b.id = 'scanShutterBtn'; b.className = 'btn success scan-shutter'; b.textContent = bi('📷 फोटो लें', '📷 Take photo');
         b.onclick = shutter;
         overlay.appendChild(b);
-        statusEl.textContent = bi('ऑटो-स्कैन उपलब्ध नहीं — बटन दबाकर फोटो लें', 'Auto-scan unavailable — tap to take the photo');
+        statusEl.textContent = bi('ऑटो-स्कैन उपलब्ध नहीं - बटन दबाकर फोटो लें', 'Auto-scan unavailable - tap to take the photo');
       };
       // Passive liveness (phase 1): the low-res preview sample from the attempt BEFORE
       // the one that locks is a free second frame, taken a fraction of a second earlier
-      // — paired with the final full-quality capture for an anti-spoofing check on the
+      // - paired with the final full-quality capture for an anti-spoofing check on the
       // server (geminiClient.checkLiveness), no extra camera call or worker action needed.
       let prevSampleDataUrl = null;
 
@@ -1285,18 +1330,18 @@ function scanFaceForPunch() {
           if (stopped) return;
           statusEl.textContent = e.message || t('scanHint');
           // Two failed polls in a row (503 Gemini, timeout, 5xx): don't burn five minutes
-          // retrying — let the person take the photo themselves; the server still runs the
+          // retrying - let the person take the photo themselves; the server still runs the
           // real face match on it.
           if (++apiFails >= 2) offerShutter();
         }
-        // Skip attempt 1 as a liveness candidate — right after the camera opens,
+        // Skip attempt 1 as a liveness candidate - right after the camera opens,
         // auto-exposure/focus hasn't settled yet and the frame can come back black or
         // blank even though grabPreviewSample() reports ok (confirmed live: a real punch
         // got wrongly blocked as a spoof because the "earlier" frame was pitch black from
         // camera warm-up, not an actual spoof attempt). Only start offering frames once
         // the preview has had at least one full cycle to stabilize.
         if (attempts >= 2) prevSampleDataUrl = sample.dataUrl;
-        // The round trip itself (upload + Gemini inference) already paces each attempt —
+        // The round trip itself (upload + Gemini inference) already paces each attempt -
         // this just stops back-to-back hammering if a response ever comes back instantly.
         setTimeout(loop, 300);
       }
@@ -1323,7 +1368,7 @@ async function doPunch() {
   // Fake-GPS signal from the phone (BRD R10); the server decides what to do with it.
   const integrity = window.TSGNative.mockLocationCheck ? await window.TSGNative.mockLocationCheck() : { ok: false };
   const selfieSmall = await shrinkDataUrl(selfie.dataUrl, 960, 0.8); // rule 9: weak networks
-  // Already low-res (a preview sample, not a full capture) — only shrunk further if it
+  // Already low-res (a preview sample, not a full capture) - only shrunk further if it
   // somehow came in larger than expected, to keep the liveness check cheap on data.
   const livenessFrameSmall = selfie.livenessFrameDataUrl ? await shrinkDataUrl(selfie.livenessFrameDataUrl, 640, 0.7) : null;
 
@@ -1385,11 +1430,11 @@ async function syncOfflinePunches() {
           capturedBootCount: item.capturedBootCount, nowElapsedMs: clock.elapsedMs, nowBootCount: clock.bootCount });
         toast(`${bi('पंच भेज दिया', 'Offline punch sent')} (${fmtTime(item.capturedAt)})`, 'success');
       } catch (e) {
-        if (e.status === 0) break; // still offline — try again later
+        if (e.status === 0) break; // still offline - try again later
         // Only a definitive refusal (bad request, forbidden, already punched, failed a
         // check) drops the punch. A 401 (session expired), 429 or any server/Gemini
-        // outage keeps it queued — it was being deleted on those too, losing real days.
-        if (![400, 403, 409, 422].includes(e.status)) { if (e.status === 401) toast(bi('सेशन खत्म — दोबारा लॉगिन करें, पंच सुरक्षित है', 'Session expired — sign in again, your punch is kept'), 'error'); break; }
+        // outage keeps it queued - it was being deleted on those too, losing real days.
+        if (![400, 403, 409, 422].includes(e.status)) { if (e.status === 401) toast(bi('सेशन खत्म - दोबारा लॉगिन करें, पंच सुरक्षित है', 'Session expired - sign in again, your punch is kept'), 'error'); break; }
         toast(`${item.payload.type === 'in' ? bi('पंच इन', 'Punch-in') : bi('पंच आउट', 'Punch-out')} ${fmtTime(item.capturedAt)} ${bi('स्वीकार नहीं हुआ', 'not accepted')}: ${e.message}`, 'error');
       }
       setOfflineQueue(offlineQueue().filter(i => i.clientId !== item.clientId));
@@ -1431,7 +1476,7 @@ function punchDoneResult(type, ts, openIn) {
 }
 const BLOCK_REASON = {
   outside_geofence: ['आप साइट से बाहर हैं', 'You are outside the site'],
-  low_accuracy: ['GPS कमज़ोर है — खुली जगह में जाएँ', 'Weak GPS — move to an open area'],
+  low_accuracy: ['GPS कमज़ोर है - खुली जगह में जाएँ', 'Weak GPS - move to an open area'],
   device_mismatch: ['यह आपका रजिस्टर्ड फ़ोन नहीं है', 'This is not your registered phone'],
   face_mismatch: ['चेहरा मेल नहीं खाया', "Face didn't match"],
   spoof_suspected: ['असली सेल्फ़ी लें, फोटो की फोटो नहीं', 'Take a live selfie, not a photo of a photo'],
@@ -1449,7 +1494,7 @@ function renderWorkerAttendance() {
   loadWorkerAttendance();
 }
 
-// ---- My days (BRD §11 screen 9, R12): monthly calendar — green present, red absent,
+// ---- My days (BRD §11 screen 9, R12): monthly calendar - green present, red absent,
 // yellow missed punch, grey off day. Tap a day for its in/out times. Worker cannot edit
 // (screen 10): the missed-punch button calls Site HR.
 async function loadWorkerAttendance() {
@@ -1524,7 +1569,7 @@ function renderWorkerCalendar() {
 }
 function showCalDay(dayStr) {
   const { kind, st, reg } = dayInfo(dayStr);
-  const label = { present: ['हाज़िर', 'Present'], absent: ['ग़ैरहाज़िर', 'Absent'], missed: ['पंच आउट छूटा', 'Missed punch-out'], off: ['छुट्टी', 'Off day'], future: ['—', '—'] }[kind];
+  const label = { present: ['हाज़िर', 'Present'], absent: ['ग़ैरहाज़िर', 'Absent'], missed: ['पंच आउट छूटा', 'Missed punch-out'], off: ['छुट्टी', 'Off day'], future: ['-', '-'] }[kind];
   document.getElementById('calDay').innerHTML = `
     <div class="worker-summary">
       <b>${dayStr}</b> · ${bi(label[0], label[1])}
@@ -1537,7 +1582,7 @@ function callSiteHr() {
   // BRD §11 screen 10: the button calls the Site HR at the worker's site; the vendor's
   // number is only a fallback when no Site HR phone is set up yet.
   const phone = (w && w.siteHr && w.siteHr.phone) || (w && w.vendor && w.vendor.phone);
-  if (!phone) { toast('No Site HR phone number set up yet — ask your supervisor', 'error'); return; }
+  if (!phone) { toast('No Site HR phone number set up yet - ask your supervisor', 'error'); return; }
   toast(t('missedPunchBody'), 'info');
   location.href = 'tel:' + phone;
 }
@@ -1563,8 +1608,8 @@ function renderWorkerMenu() {
             <tr><td class="muted">${t('dob')}</td><td>${esc(w.dob||'-')}</td></tr>
             <tr><td class="muted">${t('designation')}</td><td>${esc(w.designation||'-')}</td></tr>
             <tr><td class="muted">${t('doj')}</td><td>${esc(w.doj||'-')}</td></tr>
-            <tr><td class="muted">Aadhaar</td><td>${w.aadhaar_masked ? esc(w.aadhaar_masked) : '—'}</td></tr>
-            <tr><td class="muted">PAN</td><td>${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '—'}</td></tr>
+            <tr><td class="muted">Aadhaar</td><td>${w.aadhaar_masked ? esc(w.aadhaar_masked) : '-'}</td></tr>
+            <tr><td class="muted">PAN</td><td>${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '-'}</td></tr>
           </table>
           <p class="muted small">${t('detailsViewOnly')}</p>
         </details>
@@ -1598,7 +1643,7 @@ function renderLogoutConfirm() {
 // ---------------- HR: login ----------------
 
 // Email + the user's own password. Accounts (and first-time passwords) come from a System
-// Admin on the Users screen — the login form never creates anything.
+// Admin on the Users screen - the login form never creates anything.
 function startHrLogin() {
   clearSessionData();
   loginState = { step: 'password' };
@@ -1653,7 +1698,7 @@ async function hrChangePassword() {
 }
 
 // Admin screens: must be signed in as an admin, and the role must be allowed to open
-// the current screen — otherwise land on the role's own home screen instead.
+// the current screen - otherwise land on the role's own home screen instead.
 function requireHr() {
   const s = getSession();
   if (!isAdminSession(s)) { location.hash = '#/'; render(); return null; }
@@ -1674,7 +1719,7 @@ async function refreshAdminPermissions() {
       setSessionData({ ...s, role: me.hrUser.role, permissions: me.permissions, mustChangePassword: !!me.mustChangePassword });
       render();
     }
-  } catch (e) { /* offline or signed out — the next API call surfaces it */ }
+  } catch (e) { /* offline or signed out - the next API call surfaces it */ }
 }
 
 // Fetches only what the signed-in role is allowed to read; anything else comes back
@@ -1740,9 +1785,9 @@ function renderHrApprovals() {
       <div class="card">
         <h3>${t('pendingApprovals')}</h3>
         <datalist id="mgrEmails">${managers.map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join('')}</datalist>
-        ${pending.length === 0 ? emptyState('All caught up — no registrations waiting for approval.', 'check') : pending.map(w => `
+        ${pending.length === 0 ? emptyState('All caught up - no registrations waiting for approval.', 'check') : pending.map(w => `
           <div class="approval-row" id="approvalRow_${w.id}">
-            <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
+            <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" alt="" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
             <div class="approval-info">
               <b><a href="javascript:void(0)" onclick="viewWorker('${w.id}')" style="color:inherit">${esc(w.name)}</a></b> ${statusBadge(w.status)}<br/>
               <span class="muted small">${esc(w.mobile)} · ${esc(w.designation||'')}</span><br/>
@@ -1769,7 +1814,7 @@ function faceCheckLine(w) {
   const clean = /^face check: no match/.test(w.face_check_note);
   return `<br/><span class="small" style="color:${clean ? 'var(--ok, #16a34a)' : 'var(--warn, #b45309)'}">${clean ? '✅' : '⚠️'} ${esc(w.face_check_note)}</span>`;
 }
-// AI document-tamper flag from the PAN photo OCR call — heuristic, never auto-rejects on
+// AI document-tamper flag from the PAN photo OCR call - heuristic, never auto-rejects on
 // its own, just surfaced here so HR looks at the actual card before approving.
 function panTamperLine(w) {
   if (!w.pan_tamper_note) return '';
@@ -1789,12 +1834,12 @@ function hrApprove(id) {
   // BRD §12: approve only when the checks pass; a face check that isn't clean needs HR to
   // compare the photos and say so (the server enforces this).
   // The automatic duplicate-face check didn't give a clean verdict, so the server will
-  // refuse the approval until HR says they compared the photos themselves — make that
+  // refuse the approval until HR says they compared the photos themselves - make that
   // a visible requirement, not an easy-to-skip optional box.
   const faceNote = pw.face_check_status && pw.face_check_status !== 'clear'
     ? `<div class="gps-status warn" style="margin-top:12px">
          <b>⚠️ ${esc(biText('फोटो खुद मिलाएँ', 'Compare the photos yourself'))}</b>
-         <div class="small" style="margin-top:6px">${esc(biText('रजिस्ट्रेशन फोटो को आधार/पैन से मिलाकर नीचे एक लाइन लिखें — इसके बिना अप्रूव नहीं होगा।', 'Compare the registration photo with the Aadhaar/PAN, then write one line below — approval is blocked until you do.'))}</div>
+         <div class="small" style="margin-top:6px">${esc(biText('रजिस्ट्रेशन फोटो को आधार/पैन से मिलाकर नीचे एक लाइन लिखें - इसके बिना अप्रूव नहीं होगा।', 'Compare the registration photo with the Aadhaar/PAN, then write one line below - approval is blocked until you do.'))}</div>
          <div class="small muted" style="margin-top:6px">${esc(biText('ऑटो चेक', 'Auto check'))}: ${esc(pw.face_check_note || 'not run')}</div>
        </div>
        <label>${esc(biText('आपकी जाँच का नोट', 'Your review note'))} <span style="color:var(--bad)">*</span></label>
@@ -1825,7 +1870,7 @@ function readManagerFields(id) {
 }
 async function hrConfirmApprove(id) {
   const noteEl = document.getElementById('faceNote_' + id);
-  // Same rule the server enforces — but caught here, with the cursor put in the box,
+  // Same rule the server enforces - but caught here, with the cursor put in the box,
   // instead of a round trip ending in a long red toast.
   if (noteEl && !noteEl.value.trim()) {
     noteEl.focus(); noteEl.scrollIntoView({ block: 'center' });
@@ -1836,13 +1881,15 @@ async function hrConfirmApprove(id) {
   catch (e) { toast(e.message, 'error'); }
 }
 async function hrSendBack(id) {
-  const reason = prompt('Reason for sending back?'); if (!reason) return;
+  const reason = await askReason('Send back for correction', 'The worker sees this reason and can fix and resubmit.'); if (!reason) return;
   try { await window.Api.sendBackWorker(id, reason); toast('Sent back', 'success'); renderHrApprovals(); }
   catch (e) { toast(e.message, 'error'); }
 }
 async function hrReject(id) {
-  const reason = prompt('Reason for rejecting? (the worker is told this)'); if (!reason || reason.trim().length < 3) { if (reason !== null) toast('Give a reason', 'error'); return; }
-  try { await window.Api.rejectWorker(id, reason.trim()); toast('Rejected — worker notified', 'success'); renderHrApprovals(); }
+  const reason = await askReason('Reject this registration', 'The worker is sent this reason and cannot punch. Use "Send back" instead if they can fix something.', { danger: true, confirmLabel: 'Reject' });
+  if (!reason) return;
+  if (reason.trim().length < 3) { toast('Give a reason', 'error'); return; }
+  try { await window.Api.rejectWorker(id, reason.trim()); toast('Rejected - worker notified', 'success'); renderHrApprovals(); }
   catch (e) { toast(e.message, 'error'); }
 }
 
@@ -1897,7 +1944,7 @@ function renderRequestCard(w, locations, vendors) {
     <details><summary class="link-btn" style="color:var(--bad, #b91c1c)">Report exit (same day)</summary>
       <label>Last working day</label><input id="rq_date" type="date" class="input" value="${todayStr(Date.now())}" />
       <label>${t('reason')}</label><input id="rq_ereason" class="input" />
-      <label class="consent-row"><input type="checkbox" id="rq_bl" /><span>Misconduct — suggest blacklisting</span></label>
+      <label class="consent-row"><input type="checkbox" id="rq_bl" /><span>Misconduct - suggest blacklisting</span></label>
       <button class="btn danger small" onclick="raiseRequest('${w.id}', 'exit')">Inform Central HR</button>
     </details>
   </div>`;
@@ -1920,7 +1967,7 @@ function renderHrRequests() {
         <h3>Transfer & exit requests</h3>
         ${list.length === 0 ? emptyState('No transfer or exit requests yet.', 'doc') : list.map(r => `
           <div class="worker-summary">
-            <b>${esc(r.worker_name)}</b> — ${r.type === 'transfer' ? `transfer ${esc(r.from_location || '')} → ${esc(r.to_location || r.from_location || '')}${r.to_vendor ? ` (vendor ${esc(r.to_vendor)})` : ''}` : `exit${r.exit_date ? ' on ' + esc(r.exit_date) : ''}${r.blacklist_suggested ? ' · blacklist suggested' : ''}`}
+            <b>${esc(r.worker_name)}</b> - ${r.type === 'transfer' ? `transfer ${esc(r.from_location || '')} → ${esc(r.to_location || r.from_location || '')}${r.to_vendor ? ` (vendor ${esc(r.to_vendor)})` : ''}` : `exit${r.exit_date ? ' on ' + esc(r.exit_date) : ''}${r.blacklist_suggested ? ' · blacklist suggested' : ''}`}
             <span class="badge ${label[r.status][0]}">${label[r.status][1]}</span>
             <div class="small muted">${esc(r.reason)} · by ${esc(r.raised_by)} · ${new Date(r.raised_at).toLocaleDateString()}${r.decision_note ? ` · ${esc(r.decision_note)}` : ''}</div>
             <div style="margin-top:6px">
@@ -1934,8 +1981,8 @@ function renderHrRequests() {
 }
 async function requestAction(id, action) {
   let reason;
-  if (action === 'reject') { reason = prompt('Reason for rejecting?'); if (!reason) return; }
-  if (action === 'complete' && !confirm('Carry out this request now?')) return;
+  if (action === 'reject') { reason = await askReason('Reject this request', 'The requester sees this reason.', { danger: true, confirmLabel: 'Reject' }); if (!reason) return; }
+  if (action === 'complete' && !(await askConfirm('Carry out this request now?', 'The transfer / exit takes effect immediately.', { confirmLabel: 'Carry out' }))) return;
   try { await window.Api.workerRequestAction(id, action, reason ? { reason } : undefined); toast('Done', 'success'); renderHrRequests(); }
   catch (e) { toast(e.message, 'error'); }
 }
@@ -1969,7 +2016,7 @@ function showPunchDay(d) {
   const ps = (window._histPunches || []).filter(p => todayStr(p.ts) === d).sort((a, b) => a.ts - b.ts);
   cell.innerHTML = `<div style="padding:8px">
     <div class="day-detail">${ps.map(p => `<div class="compare-item">
-      ${p.selfie_data_url ? `<img src="${imgSrc(p.selfie_data_url)}" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
+      ${p.selfie_data_url ? `<img src="${imgSrc(p.selfie_data_url)}" alt="" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
       <span class="small">${p.type.toUpperCase()} ${fmtTime(p.ts)} ${p.result === 'blocked' ? '⛔ ' + esc(p.reason) : '✅'} ${p.distance_m != null ? p.distance_m + ' m' : ''}</span></div>`).join('')}</div>
     <div id="pmap_${d}" class="day-map"></div></div>`;
   const loc = w && w.location;
@@ -1988,7 +2035,7 @@ function showPunchDay(d) {
 // Every action needs a reason; the server records it in the worker's history.
 function renderManageWorkerCard(w, locations, vendors) {
   if (w.status === 'exited') {
-    return `<div class="card"><h3>Manage worker</h3><p class="muted">Exited on ${esc(w.exit_date || '?')} — ${esc(w.exit_reason || '')}${w.blacklisted ? ' · <b>Blacklisted</b>' : ''}</p></div>`;
+    return `<div class="card"><h3>Manage worker</h3><p class="muted">Exited on ${esc(w.exit_date || '?')} - ${esc(w.exit_reason || '')}${w.blacklisted ? ' · <b>Blacklisted</b>' : ''}</p></div>`;
   }
   const approved = w.status === 'approved';
   return `
@@ -2012,7 +2059,7 @@ function renderManageWorkerCard(w, locations, vendors) {
       <details><summary class="link-btn" style="color:var(--bad, #b91c1c)">Exit worker</summary>
         <label>Exit date</label><input id="ex_date" type="date" class="input" value="${todayStr(Date.now())}" />
         <label>${t('reason')}</label><input id="ex_reason" class="input" />
-        <label class="consent-row"><input type="checkbox" id="ex_blacklist" /><span>Blacklist (misconduct) — this Aadhaar, PAN and face can never register again, through any vendor</span></label>
+        <label class="consent-row"><input type="checkbox" id="ex_blacklist" /><span>Blacklist (misconduct) - this Aadhaar, PAN and face can never register again, through any vendor</span></label>
         <button class="btn danger small" onclick="hrExit('${w.id}')">Exit worker</button>
       </details>
     </div>`;
@@ -2030,7 +2077,10 @@ async function hrResetDevice(id) {
 }
 async function hrExit(id) {
   const blacklist = document.getElementById('ex_blacklist').checked;
-  if (!confirm(blacklist ? 'Exit AND blacklist this worker? They can never register again.' : 'Exit this worker? They will not be able to punch.')) return;
+  const ok = blacklist
+    ? await askConfirm('Exit and blacklist this worker?', 'Their Aadhaar, PAN and face are blocked from registering again, at every TSG site. This cannot be undone from the app.', { danger: true, confirmLabel: 'Blacklist', typed: 'BLACKLIST' })
+    : await askConfirm('Exit this worker?', 'They stop being able to punch from today. Attendance history is kept for billing.', { danger: true, confirmLabel: 'Exit worker' });
+  if (!ok) return;
   try {
     await window.Api.exitWorker(id, { exitDate: fieldVal('ex_date'), reason: fieldVal('ex_reason').trim(), blacklist });
     toast('Worker exited', 'success'); renderHrWorkerDetail();
@@ -2095,7 +2145,7 @@ async function checkAbsenteeismRisk(id) {
     const r = await window.Api.absenteeismRisk(id);
     const color = r.level === 'high' ? 'var(--bad, #b91c1c)' : r.level === 'medium' ? 'var(--warn, #b45309)' : 'var(--accent, #19a974)';
     el.innerHTML = `<div class="gps-status" style="border-color:${color}">
-      <b style="color:${color};text-transform:uppercase">${esc(r.level)} risk</b> — present ${r.presentDays}/${r.totalDays} days<br/>
+      <b style="color:${color};text-transform:uppercase">${esc(r.level)} risk</b> - present ${r.presentDays}/${r.totalDays} days<br/>
       <span class="small">${esc(r.reason)}</span>
     </div>`;
   } catch (e) { el.innerHTML = errorState(e.message); }
@@ -2126,9 +2176,9 @@ function renderHrWorkerDetail() {
           <table class="tbl" style="margin-top:12px">
             <tr><td class="muted">${t('designation')}</td><td>${esc(w.designation||'-')}</td></tr>
             <tr><td class="muted">${t('doj')}</td><td>${esc(w.doj||'-')}</td></tr>
-            <tr><td class="muted">Aadhaar</td><td>${w.aadhaar_masked ? esc(w.aadhaar_masked) : '—'}</td></tr>
-            <tr><td class="muted">PAN</td><td>${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '—'}</td></tr>
-            <tr><td class="muted">Reporting manager</td><td>${w.reporting_manager_email ? `${esc(w.reporting_manager_name || '')}<br/><span class="muted small">${esc(w.reporting_manager_email)}</span>` : '—'}</td></tr>
+            <tr><td class="muted">Aadhaar</td><td>${w.aadhaar_masked ? esc(w.aadhaar_masked) : '-'}</td></tr>
+            <tr><td class="muted">PAN</td><td>${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '-'}</td></tr>
+            <tr><td class="muted">Reporting manager</td><td>${w.reporting_manager_email ? `${esc(w.reporting_manager_name || '')}<br/><span class="muted small">${esc(w.reporting_manager_email)}</span>` : '-'}</td></tr>
           </table>
           ${hasPerm('workers.manage') ? `
             <details><summary class="link-btn">Change reporting manager</summary>
@@ -2140,7 +2190,7 @@ function renderHrWorkerDetail() {
         ${renderRequestCard(w, locations, vendors)}
         <div class="card">
           <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>AI attendance risk</h3>
-          <p class="muted small">Reads this worker's last 30 days for a trend or pattern — not a prediction, just a pattern read. Runs only when you ask, not automatically.</p>
+          <p class="muted small">Reads this worker's last 30 days for a trend or pattern - not a prediction, just a pattern read. Runs only when you ask, not automatically.</p>
           <div id="absRiskResult"></div>
           <button class="btn secondary small" onclick="checkAbsenteeismRisk('${w.id}')">Check now</button>
         </div>
@@ -2160,11 +2210,11 @@ function renderHrWorkerDetail() {
             <div class="compare-row">
               <div class="compare-pair">
                 <div class="compare-item">
-                  ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" />` : `<div class="compare-placeholder">${icon('user')}</div>`}
+                  ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" alt="" />` : `<div class="compare-placeholder">${icon('user')}</div>`}
                   <span>${t('registrationPhoto')}</span>
                 </div>
                 <div class="compare-item">
-                  ${p.selfie_data_url ? `<img src="${imgSrc(p.selfie_data_url)}" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
+                  ${p.selfie_data_url ? `<img src="${imgSrc(p.selfie_data_url)}" alt="" />` : `<div class="compare-placeholder">${icon('camera')}</div>`}
                   <span>${t('punchSelfie')}</span>
                 </div>
               </div>
@@ -2184,7 +2234,7 @@ function renderHrWorkerDetail() {
 }
 
 async function hrRaiseRegularisation(workerId, dateStr) {
-  const reason = prompt(t('regularisationReason') + '?'); if (!reason) return;
+  const reason = await askReason(t('regularisationReason'), dateStr ? `${bi('तारीख़', 'Date')}: ${dateStr}` : ''); if (!reason) return;
   try { await window.Api.raiseRegularisation(workerId, dateStr, reason); toast('Raised', 'success'); renderHrAttendance(); }
   catch (e) { toast(e.message, 'error'); }
 }
@@ -2239,11 +2289,11 @@ function renderHrExceptions() {
       renderShell(`
         <div class="card">
           <h3>${t('hrExceptions')}</h3>
-          ${sorted.length === 0 ? emptyState('No blocked punches — every attempt passed its checks.', 'shield') : sorted.map(p => `
+          ${sorted.length === 0 ? emptyState('No blocked punches - every attempt passed its checks.', 'shield') : sorted.map(p => `
             <div class="approval-row">
               ${thumbHtml(p.selfie_data_url)}
               <div class="approval-info">
-                <b>${nameLink(p)}</b> — ${p.type.toUpperCase()} <span class="badge badge-bad">${esc(reasonLabel(p.reason))}</span><br/>
+                <b>${nameLink(p)}</b> - ${p.type.toUpperCase()} <span class="badge badge-bad">${esc(reasonLabel(p.reason))}</span><br/>
                 <span class="muted small">${new Date(p.ts).toLocaleString()} · GPS ±${p.accuracy != null ? Math.round(p.accuracy) : '?'}m · ${p.distance_m!=null?p.distance_m+'m from site':''}</span>
                 ${aiNoteHtml(p.face_match_note)}
               </div>
@@ -2252,12 +2302,12 @@ function renderHrExceptions() {
         </div>
         <div class="card">
           <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>AI risk triage</h3>
-          <p class="muted small">Punches that were allowed — every check passed — but borderline on something. Worth a glance, not a block.</p>
+          <p class="muted small">Punches that were allowed - every check passed - but borderline on something. Worth a glance, not a block.</p>
           ${riskyOnly.length === 0 ? emptyState('Nothing flagged', 'shield') : riskyOnly.map(p => `
             <div class="approval-row">
               ${thumbHtml(p.selfie_data_url)}
               <div class="approval-info">
-                <b>${nameLink(p)}</b> — ${p.type.toUpperCase()} <span class="badge ${p.risk_score >= 50 ? 'badge-bad' : 'badge-warn'}">risk ${p.risk_score}</span><br/>
+                <b>${nameLink(p)}</b> - ${p.type.toUpperCase()} <span class="badge ${p.risk_score >= 50 ? 'badge-bad' : 'badge-warn'}">risk ${p.risk_score}</span><br/>
                 <span class="muted small">${new Date(p.ts).toLocaleString()} · ${esc(p.risk_reasons || '')}</span>
               </div>
             </div>
@@ -2525,21 +2575,21 @@ function renderVendorForm() {
       </div>
     </div>`;
 }
-// Contact person's Aadhaar/PAN — Aadhaar is an individual document, so this verifies
+// Contact person's Aadhaar/PAN - Aadhaar is an individual document, so this verifies
 // the vendor's authorized contact, not the company (the company itself is identified
 // by GSTIN/PAN above). Same OCR/QR-scan pattern as worker KYC (regPanPhoto/regScanAadhaar),
 // but captured by HR here instead of self-serve by the person.
 function renderVendorContactKyc(v) {
   return `
     <h4 style="margin-top:16px">Contact person KYC (${esc(v.contact_person || 'authorized contact')})</h4>
-    <p class="muted small">Aadhaar + PAN of the vendor's contact person — not the company (Aadhaar only exists for individuals).</p>
-    <div class="kyc-status ${v.contact_aadhaar_qr_at ? 'ok' : ''}">${v.contact_aadhaar_qr_at ? `✅ Aadhaar scanned — ${esc(v.contact_aadhaar_masked || '')}${v.contact_aadhaar_name ? ` · ${esc(v.contact_aadhaar_name)}` : ''}` : '⏳ Aadhaar not scanned yet'}</div>
-    ${vendorKyc.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button — that one works.</div>` : ''}
+    <p class="muted small">Aadhaar + PAN of the vendor's contact person - not the company (Aadhaar only exists for individuals).</p>
+    <div class="kyc-status ${v.contact_aadhaar_qr_at ? 'ok' : ''}">${v.contact_aadhaar_qr_at ? `✅ Aadhaar scanned - ${esc(v.contact_aadhaar_masked || '')}${v.contact_aadhaar_name ? ` · ${esc(v.contact_aadhaar_name)}` : ''}` : '⏳ Aadhaar not scanned yet'}</div>
+    ${vendorKyc.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button - that one works.</div>` : ''}
     <button class="btn secondary block" onclick="vendorPhotoAadhaarQr()">📷 ${v.contact_aadhaar_qr_at ? 'Take the photo again' : 'Take a photo of the Aadhaar QR'}</button>
     <button class="link-btn small" onclick="vendorScanAadhaar()">Try the live scanner instead</button>
 
     <div class="kyc-status ${v.contact_pan_verified ? 'ok' : ''}" style="margin-top:12px">${v.contact_pan_verified ? '✅ PAN verified' : (v.contact_pan_number ? '⏳ PAN read, not yet verified' : '⏳ PAN not read yet')}</div>
-    ${v.contact_pan_photo_data_url ? `<img src="${esc(v.contact_pan_photo_data_url)}" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
+    ${v.contact_pan_photo_data_url ? `<img src="${esc(v.contact_pan_photo_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
     ${v.contact_pan_number ? `<div class="kyc-status">PAN read from photo: <b>${esc(v.contact_pan_number)}</b>${v.contact_pan_name ? ` · ${esc(v.contact_pan_name)}` : ''}</div>` : ''}
     ${v.contact_pan_tamper_note ? `<div class="gps-status bad">⚠️ Possible tampering: ${esc(v.contact_pan_tamper_note)}</div>` : ''}
     <button class="btn secondary block" onclick="vendorPanPhoto()">📷 ${v.contact_pan_photo_data_url ? 'Retake PAN photo' : 'Take photo of PAN card'}</button>
@@ -2569,7 +2619,7 @@ async function vendorPanPhoto() {
 async function vendorVerifyPan() {
   try {
     // vendorId lets the server persist the verified flag straight to the row (only it
-    // can — see readVendor in masters.js); for a brand-new vendor not saved yet, there's
+    // can - see readVendor in masters.js); for a brand-new vendor not saved yet, there's
     // no row to persist to, so this only reflects locally until saved and re-verified.
     const r = await window.Api.vendorPanVerify(editingVendor.contact_pan_number, editingVendor.contact_aadhaar_name, editingVendor.id);
     editingVendor.contact_pan_verified = r.verified ? 1 : 0;
@@ -2615,7 +2665,7 @@ async function saveVendor() {
     contractStart: val('nv_cstart'), contractEnd: val('nv_cend'), status: val('nv_status'),
     contactPanPhotoDataUrl: editingVendor.contact_pan_photo_data_url, contactPanNumber: editingVendor.contact_pan_number,
     contactPanName: editingVendor.contact_pan_name, contactPanTamperNote: editingVendor.contact_pan_tamper_note,
-    // contact_pan_verified is deliberately NOT sent — the server never accepts it from
+    // contact_pan_verified is deliberately NOT sent - the server never accepts it from
     // the client (see readVendor in masters.js); it can only be set via a real
     // /vendor-kyc/pan-verify call, which persists it server-side directly.
     contactAadhaarMasked: editingVendor.contact_aadhaar_masked, contactAadhaarKey: editingVendor.contact_aadhaar_key,
@@ -2674,17 +2724,17 @@ async function gateSearch() {
   el.innerHTML = spinnerRow('Checking…');
   try {
     const rows = await window.Api.gateCheck(fieldVal('gate_q').trim());
-    el.innerHTML = rows.length === 0 ? `<div class="gps-status bad" style="font-size:18px">❌ Not registered — no entry</div>` : rows.map(r => `
+    el.innerHTML = rows.length === 0 ? `<div class="gps-status bad" style="font-size:18px">❌ Not registered - no entry</div>` : rows.map(r => `
       <div class="worker-summary" style="border-left:6px solid ${r.entryAllowed ? 'var(--ok, #16a34a)' : 'var(--bad, #b91c1c)'}">
         <div class="profile-header">
-          ${r.photo ? `<img src="${imgSrc(r.photo)}" class="avatar" style="width:72px;height:72px" />` : `<div class="avatar">?</div>`}
+          ${r.photo ? `<img src="${imgSrc(r.photo)}" alt="" class="avatar" style="width:72px;height:72px" />` : `<div class="avatar">?</div>`}
           <div class="profile-text">
-            <h3>${esc(r.name || '—')}</h3>
+            <h3>${esc(r.name || '-')}</h3>
             <div class="muted small">…${esc(r.mobileLast4)} · ${esc(r.vendor || '')} · ${esc(r.location || '')} · ${esc(r.designation || '')}</div>
           </div>
         </div>
         <div style="font-size:20px;font-weight:700;margin-top:8px;color:${r.entryAllowed ? 'var(--ok, #16a34a)' : 'var(--bad, #b91c1c)'}">
-          ${r.entryAllowed ? '✅ ENTRY ALLOWED' : `❌ NO ENTRY — ${r.blacklisted ? 'blacklisted' : r.status === 'exited' ? 'exited' : 'not approved by HR'}`}
+          ${r.entryAllowed ? '✅ ENTRY ALLOWED' : `❌ NO ENTRY - ${r.blacklisted ? 'blacklisted' : r.status === 'exited' ? 'exited' : 'not approved by HR'}`}
         </div>
       </div>`).join('');
   } catch (e) { el.innerHTML = ''; toast(e.message, 'error'); }
@@ -2697,7 +2747,7 @@ function renderKioskPair() {
   renderShell(`
     <div class="card center-card">
       <h3>🖥️ Gate tablet setup</h3>
-      ${getAppMode() === 'kiosk' ? `<p class="gps-status warn small">${bi('इस टैबलेट की पेयरिंग हट गई है — HR से नया कोड लें।', 'This tablet is no longer paired — ask HR for a new code.')}</p>` : ''}
+      ${getAppMode() === 'kiosk' ? `<p class="gps-status warn small">${bi('इस टैबलेट की पेयरिंग हट गई है - HR से नया कोड लें।', 'This tablet is no longer paired - ask HR for a new code.')}</p>` : ''}
       <p class="muted small">Enter the 6-digit pairing code from HR (More → Gate tablets). This tablet then stays on this site's punch screen.</p>
       <input id="kp_code" class="input" maxlength="6" inputmode="numeric" />
       <button class="btn primary block" onclick="kioskPairNow()">Pair this tablet</button>
@@ -2749,7 +2799,7 @@ async function kioskFind() {
         <h3>${bi('अपनी फोटो पर टैप करें', 'Tap your photo')}</h3>
         <div class="tile-grid">${list.map(c => `
           <button class="tile" ${c.next === 'done' ? 'disabled' : ''} onclick="kioskPunch('${c.id}', '${c.next}')">
-            ${c.photo ? `<img src="${imgSrc(c.photo)}" class="avatar" style="width:90px;height:90px" />` : `<span class="tile-icon">🙂</span>`}
+            ${c.photo ? `<img src="${imgSrc(c.photo)}" alt="" class="avatar" style="width:90px;height:90px" />` : `<span class="tile-icon">🙂</span>`}
             <span class="tile-hi">${esc(c.firstName)}</span>
             <span class="tile-en">${c.next === 'in' ? 'Punch in' : c.next === 'out' ? 'Punch out' : 'Day complete'}</span>
           </button>`).join('')}</div>
@@ -2832,11 +2882,11 @@ async function kioskCreate() {
   catch (e) { toast(e.message, 'error'); }
 }
 async function kioskNewCode(id, name) {
-  if (!confirm('A new code replaces the current tablet — the old one stops working. Continue?')) return;
+  if (!(await askConfirm('Issue a new pairing code?', `${name ? name + ': ' : ''}the tablet paired now stops working until it is paired again with the new code.`, { confirmLabel: 'New code' }))) return;
   try { const r = await window.Api.kioskNewCode(id); window._newKioskCode = { name, code: r.pairingCode }; renderHrKiosks(); } catch (e) { toast(e.message, 'error'); }
 }
 async function kioskRetire(id) {
-  if (!confirm('Retire this gate tablet? It stops working immediately.')) return;
+  if (!(await askConfirm('Retire this gate tablet?', 'It stops working immediately. Workers at that gate punch on their phones until a new tablet is paired.', { danger: true, confirmLabel: 'Retire' }))) return;
   try { await window.Api.setKioskStatus(id, 'retired'); renderHrKiosks(); } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -2852,7 +2902,7 @@ function renderHrAssist() {
   renderShell(`
     <div class="card center-card">
       <h3>Register a worker</h3>
-      <p class="muted small">The worker must be with you. An OTP goes to <b>the worker's</b> mobile — they read it out to you. Then fill the registration with them, including a live photo of their face.</p>
+      <p class="muted small">The worker must be with you. An OTP goes to <b>the worker's</b> mobile - they read it out to you. Then fill the registration with them, including a live photo of their face.</p>
       <label>${t('mobileNumber')} (worker's)</label>
       <input id="as_mobile" class="input" maxlength="10" inputmode="numeric" placeholder="98xxxxxxxx" />
       <button class="btn primary block" onclick="assistRequestOtp()">${t('sendOtp')}</button>
@@ -2883,7 +2933,7 @@ async function assistVerifyOtp() {
   } catch (e) { toast(e.message, 'error'); }
 }
 async function endAssistedSession() {
-  try { await window.Api.logout(); } catch (e) { /* ended or offline — the server idles it out */ }
+  try { await window.Api.logout(); } catch (e) { /* ended or offline - the server idles it out */ }
   let hr = null;
   try { hr = JSON.parse(localStorage.getItem(ASSIST_BACKUP_KEY) || 'null'); } catch (e) { /* corrupt */ }
   localStorage.removeItem(ASSIST_BACKUP_KEY);
@@ -2912,12 +2962,12 @@ function renderHrBilling() {
         <p class="muted small">Vendors are paid only on system days. Gap = invoice days − system days.</p>
         <input type="month" class="input" value="${month}" max="${todayStr(Date.now()).slice(0, 7)}" onchange="window._billMonth=this.value;renderHrBilling()" />
         <div class="gps-status ${data.locked ? 'ok' : 'warn'}" style="margin:8px 0">
-          ${data.locked ? `🔒 Attendance locked by ${esc(data.lock.locked_by)} on ${new Date(data.lock.locked_at).toLocaleDateString()}` : '🔓 Attendance not locked yet — Central HR locks the month, then invoices are entered'}
+          ${data.locked ? `🔒 Attendance locked by ${esc(data.lock.locked_by)} on ${new Date(data.lock.locked_at).toLocaleDateString()}` : '🔓 Attendance not locked yet - Central HR locks the month, then invoices are entered'}
           ${hasPerm('attendance.lock') ? (data.locked
             ? `<button class="btn secondary small" style="margin-top:6px" onclick="billUnlock('${month}')">Unlock</button>`
             : `<button class="btn primary small" style="margin-top:6px" onclick="billLock('${month}')">Lock ${month}</button>`) : ''}
         </div>
-        ${data.rows.length === 0 ? emptyState(`No attendance recorded for ${month} — nothing to bill yet.`, 'ledger') : `
+        ${data.rows.length === 0 ? emptyState(`No attendance recorded for ${month} - nothing to bill yet.`, 'ledger') : `
         <table class="tbl">
           <thead><tr><th>${t('vendor')}</th><th>Workers</th><th>System days</th><th>Invoice days</th><th>Gap</th><th></th></tr></thead>
           <tbody>${data.rows.map(r => `<tr>
@@ -2927,7 +2977,7 @@ function renderHrBilling() {
             <td>${canEdit
               ? `<input id="inv_${r.vendorId}" class="input" type="number" step="0.5" min="0" style="width:80px;margin:0" value="${r.invoiceDays ?? ''}" />
                  <button class="btn secondary small" onclick="billSaveInvoice('${r.vendorId}','${month}')">${t('save')}</button>`
-              : (r.invoiceDays ?? '—')}</td>
+              : (r.invoiceDays ?? '-')}</td>
             <td>${r.gap == null ? '' : `<b style="color:${r.gap > 0 ? 'var(--bad, #b91c1c)' : r.gap < 0 ? 'var(--warn, #b45309)' : 'inherit'}">${r.gap > 0 ? '+' : ''}${r.gap}</b>`}</td>
             <td><span class="badge ${BILL_STATUS[r.status][0]}">${BILL_STATUS[r.status][1]}</span></td>
           </tr>`).join('')}</tbody>
@@ -2939,11 +2989,11 @@ function renderHrBilling() {
   });
 }
 async function billLock(month) {
-  if (!confirm(`Lock attendance for ${month}? No more corrections can be made for this month.`)) return;
+  if (!(await askConfirm(`Lock attendance for ${month}?`, 'No more corrections can be made for this month. Finance can then enter vendor invoices.', { confirmLabel: 'Lock month' }))) return;
   try { await window.Api.lockMonth(month); toast('Month locked', 'success'); renderHrBilling(); } catch (e) { toast(e.message, 'error'); }
 }
 async function billUnlock(month) {
-  const reason = prompt('Reason for unlocking ' + month + '?'); if (!reason) return;
+  const reason = await askReason(`Unlock ${month}?`, 'Unlocking reopens corrections for a month vendors may already have been billed on. This is audited.', { danger: true, confirmLabel: 'Unlock', typed: month }); if (!reason) return;
   try { await window.Api.unlockMonth(month, reason); toast('Month unlocked', 'success'); renderHrBilling(); } catch (e) { toast(e.message, 'error'); }
 }
 async function billSaveInvoice(vendorId, month) {
@@ -2958,7 +3008,7 @@ async function billDetail(vendorId, vendorName) {
   el.innerHTML = spinnerRow('Loading…');
   try {
     const d = await window.Api.vendorBillWorkers(vendorId, month);
-    el.innerHTML = `<h3 style="margin-top:16px">${esc(vendorName)} — day-wise</h3>
+    el.innerHTML = `<h3 style="margin-top:16px">${esc(vendorName)} - day-wise</h3>
       <table class="tbl"><thead><tr><th>${t('worker')}</th><th>Days</th><th>Dates</th></tr></thead>
       <tbody>${d.rows.map(r => `<tr><td>${esc(r.name)}</td><td>${r.days}</td><td class="small wrap">${esc(r.dates)}</td></tr>`).join('')}</tbody></table>`;
     labelTables(el);
@@ -2971,7 +3021,7 @@ async function billDownload(month) {
 
 // ---------------- R15: automatic emails (Central HR sets them once) ----------------
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-// ---- AI assistant — ask attendance questions in plain language (see
+// ---- AI assistant - ask attendance questions in plain language (see
 // src/services/aiAssistant.js: answers are always grounded in real, scoped data, the
 // model never writes SQL or invents a number). ----
 let hrAskHistory = [];
@@ -2983,7 +3033,7 @@ function renderHrAsk() {
   renderShell(`
     <div class="card">
       <h3><span class="icon-inline" style="width:20px;height:20px;margin-right:6px">${icon('sparkle')}</span>Ask AI</h3>
-      <p class="muted small">Attendance ke baare mein kuch bhi poocho — Hindi, English, dono. Answer hamesha real data se aata hai.</p>
+      <p class="muted small">Attendance ke baare mein kuch bhi poocho - Hindi, English, dono. Answer hamesha real data se aata hai.</p>
       ${hrAskHistory.length === 0 ? `<div class="filter-row" style="display:flex;flex-wrap:wrap;gap:8px">${HR_ASK_EXAMPLES.map(q => `<button class="btn secondary small" onclick="hrAskQuick('${esc(q).replace(/'/g, "\\'")}')">${esc(q)}</button>`).join('')}</div>` : ''}
     </div>
     ${hrAskHistory.map((h, i) => `
@@ -3031,7 +3081,7 @@ function renderHrEmails() {
       <div class="card">
         <h3>Automatic emails</h3>
         <p class="muted small">Each email includes an Excel file. Times are IST.</p>
-        ${!data.delivery.email ? `<div class="gps-status warn">Email sending isn't set up yet (no SMTP in the server's .env) — reports are built and logged but not delivered.</div>` : ''}
+        ${!data.delivery.email ? `<div class="gps-status warn">Email sending isn't set up yet (no SMTP in the server's .env) - reports are built and logged but not delivered.</div>` : ''}
         ${!data.delivery.whatsapp ? `<p class="muted small">WhatsApp copy of the manager's email: not set up (WATI).</p>` : ''}
       </div>
       ${data.reports.map(r => `
@@ -3134,9 +3184,9 @@ function renderUserForm(roles, locations, vendors) {
       <label>Role</label>
       <select id="au_role" class="input" onchange="syncUserScopeFields()">${roles.map(r => `<option value="${r.id}" ${u.role === r.id ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select>
       <div id="au_loc_wrap"><label>${t('location')}</label>
-        <select id="au_location" class="input"><option value="">—</option>${locations.map(l => `<option value="${l.id}" ${u.location_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+        <select id="au_location" class="input"><option value="">-</option>${locations.map(l => `<option value="${l.id}" ${u.location_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
       <div id="au_vendor_wrap"><label>${t('vendor')}</label>
-        <select id="au_vendor" class="input"><option value="">—</option>${vendors.map(v => `<option value="${v.id}" ${u.vendor_id === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>
+        <select id="au_vendor" class="input"><option value="">-</option>${vendors.map(v => `<option value="${v.id}" ${u.vendor_id === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>
       <p class="muted small" id="au_scope_hint"></p>
       ${isNew ? `
         <label>Temporary password <span class="muted">(they must change it at first login)</span></label>
@@ -3150,7 +3200,7 @@ function renderUserForm(roles, locations, vendors) {
           <option value="inactive" ${u.status === 'inactive' ? 'selected' : ''}>Inactive (cannot log in)</option>
         </select>
         ${u.tempPassword ? `
-          <div class="pw-temp"><div><div class="small muted">New temporary password — share it with ${esc(u.name || u.email)}, they must change it at first login</div><code>${esc(u.tempPassword)}</code></div><button class="btn secondary small" onclick="copyText('${esc(u.tempPassword)}')">Copy</button></div>` : `
+          <div class="pw-temp"><div><div class="small muted">New temporary password - share it with ${esc(u.name || u.email)}, they must change it at first login</div><code>${esc(u.tempPassword)}</code></div><button class="btn secondary small" onclick="copyText('${esc(u.tempPassword)}')">Copy</button></div>` : `
           <button class="btn secondary block" onclick="resetUserPassword('${u.id}')"><span class="nav-icon" style="vertical-align:-3px;margin-right:6px">${icon('key')}</span>Reset password${u.has_password === false ? ' (none set yet)' : ''}</button>`}`}
       <div class="wizard-actions">
         <button class="btn secondary" onclick="editingUser=null;renderHrUsers()">${t('cancel')}</button>
@@ -3164,7 +3214,7 @@ async function suggestUserPassword() {
 }
 async function resetUserPassword(id) {
   const u = (window._adminUsers || []).find(x => x.id === id) || {};
-  if (!confirm(`Reset the password for ${u.email}? Their old password stops working immediately.`)) return;
+  if (!(await askConfirm(`Reset the password for ${u.email}?`, 'Their old password stops working immediately; you get a temporary one to pass on.', { confirmLabel: 'Reset password' }))) return;
   try {
     const r = await window.Api.resetAdminPassword(id);
     editingUser = { ...u, tempPassword: r.password };
@@ -3184,7 +3234,7 @@ function syncUserScopeFields() {
   const hints = {
     manager: 'Sees workers whose reporting manager email is this user\'s email.',
     all: 'Sees workers at every location.',
-    none: 'No access to worker data — sets up vendors, locations and users.',
+    none: 'No access to worker data - sets up vendors, locations and users.',
   };
   document.getElementById('au_scope_hint').textContent = hints[role.scope] || '';
 }
@@ -3226,13 +3276,13 @@ function renderHrAccount() {
   const initials = (s.name || '?').trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
   renderShell(`
     <div class="card center-card">
-      <div class="avatar" style="margin:0 auto 12px; width:64px; height:64px; font-size:22px">${esc(initials)}</div>
+      <div alt="" class="avatar" style="margin:0 auto 12px; width:64px; height:64px; font-size:22px">${esc(initials)}</div>
       <h3>${esc(s.name)}</h3>
       <p class="muted">${esc(s.email)}</p>
       <span class="badge badge-neutral">${esc(ROLE_LABELS[s.role] || s.role)}</span>
       <details class="pw-change" ${s.mustChangePassword ? 'open' : ''} style="margin:16px 0; text-align:left">
         <summary>${t('changePassword')}</summary>
-        ${s.mustChangePassword ? `<p class="muted small">${biText('आपको अस्थायी पासवर्ड मिला है — आगे बढ़ने से पहले अपना पासवर्ड चुनें।', 'You were given a temporary password — choose your own before continuing.')}</p>` : ''}
+        ${s.mustChangePassword ? `<p class="muted small">${biText('आपको अस्थायी पासवर्ड मिला है - आगे बढ़ने से पहले अपना पासवर्ड चुनें।', 'You were given a temporary password - choose your own before continuing.')}</p>` : ''}
         <label>${t('currentPassword')}</label><input id="cp_current" class="input" type="password" autocomplete="current-password" />
         <label>${t('newPassword')}</label><input id="cp_new" class="input" type="password" autocomplete="new-password" placeholder="${biText('कम से कम 8 अक्षर, अक्षर + अंक', 'At least 8 characters, letters + numbers')}" />
         <label>${t('newPasswordAgain')}</label><input id="cp_again" class="input" type="password" autocomplete="new-password" onkeydown="if(event.key==='Enter')hrChangePassword()" />
@@ -3266,7 +3316,7 @@ function renderHrLogoutConfirm() {
 
 function render() {
   // Redirects update location.hash (so the URL/back-button stays correct) but never
-  // rely on the resulting 'hashchange' event to trigger the actual re-render — on at
+  // rely on the resulting 'hashchange' event to trigger the actual re-render - on at
   // least one real device that event did not reliably fire after a programmatic hash
   // change, which left the screen permanently blank with no error at all. Falling
   // through to render the target screen directly, in the same call, fixes that.
@@ -3321,7 +3371,7 @@ function render() {
 }
 
 window.addEventListener('hashchange', render);
-// Don't rely solely on DOMContentLoaded firing after this listener attaches — on some
+// Don't rely solely on DOMContentLoaded firing after this listener attaches - on some
 // WebViews the event can already have fired by the time this script (loaded after
 // several others) finishes parsing, which left the screen permanently blank with no
 // error. If the document is already ready, render immediately instead of waiting.
@@ -3347,7 +3397,7 @@ window.addEventListener('error', (e) => {
 
 // ---------------- Hardware/gesture back button ----------------
 // Capacitor's default, with nothing listening, is to just close the app whenever
-// there's no browser history entry to pop — and several screens here (login
+// there's no browser history entry to pop - and several screens here (login
 // sub-steps, the registration wizard) swap content directly instead of changing
 // location.hash, so there's often no history entry at all. This owns every back
 // press explicitly instead of relying on that default.
@@ -3373,7 +3423,7 @@ function handleBackButton() {
   const hash = location.hash || '#/';
   if (!s) {
     if (hash !== '#/') { location.hash = '#/'; render(); return; }
-    window.TSGNative.minimizeApp(); // at the true root with nothing to go back to — minimize, don't kill
+    window.TSGNative.minimizeApp(); // at the true root with nothing to go back to - minimize, don't kill
     return;
   }
   const homeHash = s.role === 'worker' ? '#/w/home' : adminHomeHash();
