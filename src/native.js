@@ -224,6 +224,12 @@ async function setKioskMode(on) {
   try { return { ok: true, ...(await DeviceIntegrity.setKioskMode({ on: !!on })) }; }
   catch (err) { return { ok: false, error: (err && err.message) || 'unavailable' }; }
 }
+// Shows Android's "choose home app" dialog so the gate tablet makes this app its home
+// screen (one-time kiosk setup; resolves isHomeApp:true when already done).
+async function requestHomeLauncher() {
+  try { return { ok: true, ...(await DeviceIntegrity.requestHomeLauncher()) }; }
+  catch (err) { return { ok: false, error: (err && err.message) || 'unavailable' }; }
+}
 // Opens Settings > "Display over other apps" for this app (one-time kiosk setup).
 async function requestOverlayPermission() {
   try { return { ok: true, ...(await DeviceIntegrity.requestOverlayPermission()) }; }
@@ -258,4 +264,4 @@ async function minimizeApp() {
   try { await App.minimizeApp(); } catch (err) { /* web/dev fallback: no-op */ }
 }
 
-window.TSGNative = { mockLocationCheck, deviceClock, setKeepAwake, setKioskMode, requestOverlayPermission, takeSelfie, scanQrCode, scanQrFromPhoto, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };
+window.TSGNative = { mockLocationCheck, deviceClock, setKeepAwake, setKioskMode, requestOverlayPermission, requestHomeLauncher, takeSelfie, scanQrCode, scanQrFromPhoto, takeDocumentPhoto, speakText, stopSpeaking, getPosition, startFacePreview, stopFacePreview, grabPreviewSample, capturePreviewPhoto, onBackButton, minimizeApp };

@@ -77,6 +77,13 @@ public class DeviceIntegrityPlugin extends Plugin {
         try {
             SharedPreferences prefs = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             prefs.edit().putBoolean(KEY_KIOSK, on).apply();
+            // The HOME-launcher alias (manifest .KioskLauncher) exists only while kiosk
+            // mode is on. Disabling it hands the home screen back to the stock launcher.
+            android.content.pm.PackageManager pm = getContext().getPackageManager();
+            android.content.ComponentName alias = new android.content.ComponentName(getContext(), getContext().getPackageName() + ".KioskLauncher");
+            pm.setComponentEnabledSetting(alias,
+                on ? android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED : android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                android.content.pm.PackageManager.DONT_KILL_APP);
         } catch (Exception e) {
             call.reject(e.getMessage());
             return;
@@ -85,7 +92,34 @@ public class DeviceIntegrityPlugin extends Plugin {
         ret.put("ok", true);
         ret.put("kiosk", on);
         ret.put("overlayPermission", canDrawOverlays());
+        ret.put("isHomeApp", isHomeApp());
         call.resolve(ret);
+    }
+
+    /** True when this app is the tablet's current default HOME activity. */
+    private boolean isHomeApp() {
+        try {
+            Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
+            android.content.pm.ResolveInfo ri = getContext().getPackageManager().resolveActivity(home, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+            return ri != null && ri.activityInfo != null && getContext().getPackageName().equals(ri.activityInfo.packageName);
+        } catch (Exception e) { return false; }
+    }
+
+    /**
+     * Fires a HOME intent so Android shows its "choose home app" dialog (pick TSG
+     * Workforce → Always). One-time step when a gate tablet is paired; a no-op once the
+     * app already is the home app.
+     */
+    @PluginMethod
+    public void requestHomeLauncher(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            if (isHomeApp()) { ret.put("ok", true); ret.put("isHomeApp", true); call.resolve(ret); return; }
+            Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(home);
+            ret.put("ok", true); ret.put("isHomeApp", false);
+            call.resolve(ret);
+        } catch (Exception e) { call.reject(e.getMessage()); }
     }
 
     /**

@@ -2790,7 +2790,20 @@ function kioskArmIdle() {
 function kioskNative(on) {
   const n = window.TSGNative || {};
   try { if (n.setKeepAwake) n.setKeepAwake(on); } catch (e) { /* older native bundle */ }
-  try { if (n.setKioskMode) n.setKioskMode(on); } catch (e) { /* older native bundle */ }
+  try {
+    if (!n.setKioskMode) return;
+    Promise.resolve(n.setKioskMode(on)).then(r => {
+      // Once per pairing: make the app the tablet's home screen, so a reboot, a Home
+      // press or a crash all come back to the punch screen (OEMs often drop the
+      // BOOT_COMPLETED broadcast, so the home-app route is the dependable one).
+      if (on && r && r.ok && r.isHomeApp === false && n.requestHomeLauncher && !localStorage.getItem('tsg_kiosk_home_asked')) {
+        localStorage.setItem('tsg_kiosk_home_asked', '1');
+        toast(biText('अगली स्क्रीन पर "TSG Workforce" चुनें → हमेशा (Always)', 'On the next screen choose "TSG Workforce" → Always'), 'info');
+        setTimeout(() => n.requestHomeLauncher(), 1500);
+      }
+      if (!on) localStorage.removeItem('tsg_kiosk_home_asked');
+    }).catch(() => {});
+  } catch (e) { /* older native bundle */ }
 }
 
 // Admin: set up gate tablets (kiosks.manage).
