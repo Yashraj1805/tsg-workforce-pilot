@@ -102,9 +102,14 @@ function emptyState(message, iconName) {
 function imgSrc(v) {
   return (typeof v === 'string' && /^data:image\/(jpeg|jpg|png);base64,[A-Za-z0-9+/=]+$/.test(v)) ? v : '';
 }
-function thumbHtml(dataUrl) {
+function thumbHtml(dataUrl, name) {
   // < 200 chars is a bare header with no pixels (seen on test rows), never a real photo.
-  return dataUrl && /^data:image\//.test(dataUrl) && dataUrl.length > 200 ? `<img src="${esc(dataUrl)}" alt="" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`;
+  if (dataUrl && /^data:image\//.test(dataUrl) && dataUrl.length > 200) return `<img src="${esc(dataUrl)}" alt="" class="thumb" />`;
+  const ini = initialsOf(name);
+  return ini ? `<div class="thumb placeholder initials" aria-hidden="true">${esc(ini)}</div>` : `<div class="thumb placeholder">${icon('user')}</div>`;
+}
+function initialsOf(name) {
+  return String(name || '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join('').toUpperCase();
 }
 // Punch block reasons are stored as codes (punches.js); HR reads words.
 const REASON_LABELS = {
@@ -633,8 +638,10 @@ function startWorkerLogin() {
   loginState = { step: 'mobile' };
   renderShell(`
     <div class="card center-card">
+      <div class="login-mark worker">${icon('user')}</div>
       <h3>${t('mobileNumber')}</h3>
-      <input id="loginMobile" class="input" maxlength="10" inputmode="numeric" placeholder="98xxxxxxxx" />
+      <p class="login-sub">${bi('वही नंबर जो आपके पास है - OTP इसी पर आएगा', 'The number you carry - the OTP comes to it')}</p>
+      <input id="loginMobile" class="input big-digits" maxlength="10" inputmode="numeric" placeholder="98xxxxxxxx" />
       <button class="btn primary block" onclick="workerRequestOtp()">${t('sendOtp')}</button>
     </div>
   `);
@@ -697,8 +704,10 @@ const REG_STEPS = 8;
 
 // Hindi first, English below.
 function bi(hi, en) {
-  if (currentLang === 'en') return `<span class="bi-en">${en}</span>`;
-  if (currentLang === 'hi') return `<span class="bi-hi">${hi}</span>`;
+  // Single-language mode: that language is the primary text, not the small grey
+  // secondary line it is when both are shown together.
+  if (currentLang === 'en') return `<span class="bi-en solo">${en}</span>`;
+  if (currentLang === 'hi') return `<span class="bi-hi solo">${hi}</span>`;
   return `<span class="bi-hi">${hi}</span><span class="bi-en">${en}</span>`;
 }
 // Plain-text form of bi() for places that can't take HTML: placeholder/title
@@ -1180,7 +1189,7 @@ function renderWorkerHome() {
             ${openIn ? t('punchOut') : t('punchIn')}
           </button>
         </div>
-        <p class="muted small">Assigned site: ${esc(w.location?w.location.name:'')} (geofence ${w.location?w.location.radius:''} m)</p>
+        <div class="site-line"><span class="nav-icon">${icon('pin')}</span><span>${esc(w.location ? w.location.name : '')}</span><span class="small" style="opacity:.7">· ${w.location ? w.location.radius : ''} m</span></div>
         <button class="btn secondary block" onclick="checkMyLocation()"><span class="icon-inline">${icon('pin')}</span> ${t('checkLocation')}</button>
         <div id="gpsStatus"></div>
         <div id="gpsMap" class="map-box" style="display:none"></div>
@@ -1653,7 +1662,9 @@ function startHrLogin() {
   const last = localStorage.getItem('tsg_last_hr_email') || '';
   renderShell(`
     <div class="card center-card">
+      <div class="login-mark">${icon('shield')}</div>
       <h3>${t('hrUser')}</h3>
+      <p class="login-sub">${biText('कंपनी ईमेल और अपना पासवर्ड', 'Company email and your own password')}</p>
       <label>Email</label>
       <input id="hrEmail" class="input" type="email" autocomplete="username" placeholder="name@thesachdevgroup.com" value="${esc(last)}" />
       <label>${t('password')}</label>
@@ -1790,7 +1801,7 @@ function renderHrApprovals() {
         <datalist id="mgrEmails">${managers.map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join('')}</datalist>
         ${pending.length === 0 ? emptyState('All caught up - no registrations waiting for approval.', 'check') : pending.map(w => `
           <div class="approval-row" id="approvalRow_${w.id}">
-            <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" alt="" class="thumb" />` : `<div class="thumb placeholder"></div>`}</a>
+            <a href="javascript:void(0)" onclick="viewWorker('${w.id}')">${thumbHtml(w.photo_data_url, w.name)}</a>
             <div class="approval-info">
               <b><a href="javascript:void(0)" onclick="viewWorker('${w.id}')" style="color:inherit">${esc(w.name)}</a></b> ${statusBadge(w.status)}<br/>
               <span class="muted small">${esc(w.mobile)} · ${esc(w.designation||'')}</span><br/>

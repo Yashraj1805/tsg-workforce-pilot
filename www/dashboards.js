@@ -61,7 +61,7 @@ function dashPeople(rows, { title, emptyText, limit = 6, showAll } = {}) {
       <h3>${title}</h3>
       ${rows.length === 0 ? emptyState(emptyText || 'No workers in your scope yet.', 'user') : shown.map(({ w, st }) => `
         <div class="dash-person" onclick="viewWorker('${w.id}')">
-          ${w.photo_data_url ? `<img src="${esc(w.photo_data_url)}" alt="" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`}
+          ${thumbHtml(w.photo_data_url, w.name)}
           <div class="dash-person-text"><b>${esc(w.name || w.mobile)}</b><span class="muted small">${esc(w.designation || w.location_name || '')}</span></div>
           <span class="dash-dot ${dot[st.status] || ''}"></span><span class="dash-person-status small">${line(st)}</span>
         </div>`).join('')}
@@ -198,7 +198,7 @@ function renderManagerDashboard() {
         <div class="dash-loc-head"><h3 style="margin:0">${title}</h3><span class="badge ${tone}">${rows.length}</span></div>
         ${rows.length === 0 ? `<p class="muted small" style="margin:8px 0 0">${empty}</p>` : rows.map(({ w, st }) => `
           <div class="dash-person" onclick="viewWorker('${w.id}')">
-            ${w.photo_data_url ? `<img src="${esc(w.photo_data_url)}" alt="" class="thumb" />` : `<div class="thumb placeholder">${icon('user')}</div>`}
+            ${thumbHtml(w.photo_data_url, w.name)}
             <div class="dash-person-text"><b>${esc(w.name || w.mobile)}</b><span class="muted small">${esc(w.designation || '')}${w.vendor_name ? ' · ' + esc(w.vendor_name) : ''}</span></div>
             <span class="dash-person-status small">${st.inTime ? 'In ' + fmtTime(st.inTime) : ''}${st.outTime ? ' · Out ' + fmtTime(st.outTime) : ''}</span>
           </div>`).join('')}
