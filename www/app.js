@@ -891,12 +891,13 @@ function regPan() {
       ${regHeader(4, 'पैन कार्ड', 'PAN card')}
       ${!w.aadhaar_verified ? `<div class="gps-status warn">${bi('आधार की OTP पुष्टि अभी बाकी है - पिछले स्टेप में करें।', 'Aadhaar OTP verification is still pending - do it in the previous step.')}
         <button class="btn secondary small" style="margin-top:6px" onclick="renderRegStep(3)">${bi('आधार पर जाएँ', 'Go to Aadhaar')}</button></div>` : ''}
-      <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ ' + bi('पैन की पुष्टि हो गई', 'PAN verified') : '⏳ ' + bi('पैन की पुष्टि बाकी है', 'PAN not yet verified')}</div>
+      <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ ' + bi('पैन की पुष्टि हो गई', 'PAN verified') + (w.pan_number ? ` · ${esc(w.pan_number.slice(0, 2))}XXXXXXX${esc(w.pan_number.slice(-1))}` : '') : '⏳ ' + bi('पैन की पुष्टि बाकी है', 'PAN not yet verified')}</div>
+      ${w.pan_photo_data_url ? `<img src="${imgSrc(w.pan_photo_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
+      ${w.pan_verified && !w.pan_photo_data_url ? `<p class="muted small">${bi('पैन DigiLocker से सत्यापित है - रिकॉर्ड के लिए कार्ड की एक फोटो लें।', 'PAN is verified through DigiLocker - take one photo of the card for the record.')}</p>` : ''}
+      <button class="btn ${w.pan_verified && !w.pan_photo_data_url ? 'primary' : 'secondary'} block" onclick="regPanPhoto()">📷 ${w.pan_photo_data_url ? bi('पैन की फोटो फिर से लें', 'Retake PAN photo') : bi('पैन कार्ड की फोटो लें', 'Take photo of PAN card')}</button>
       ${!w.pan_verified ? `
-        ${w.pan_photo_data_url ? `<img src="${imgSrc(w.pan_photo_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
         ${regState.panRead ? `<div class="kyc-status">PAN read from photo: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
           <button class="btn primary block" onclick="verifyPan(true)">Yes, verify this PAN</button>` : ''}
-        <button class="btn secondary block" onclick="regPanPhoto()">📷 ${w.pan_photo_data_url ? bi('पैन की फोटो फिर से लें', 'Retake PAN photo') : bi('पैन कार्ड की फोटो लें', 'Take photo of PAN card')}</button>
         ${regState.panManual ? `
           <input id="f_pan" class="input" maxlength="10" placeholder="ABCDE1234F" style="text-transform:uppercase" />
           <button class="btn secondary block" onclick="verifyPan(false)">Verify PAN</button>
@@ -929,10 +930,12 @@ async function startDigilocker() {
     // taps "I've completed verification" to fetch the result using the request id
     // we already hold - see tsg-workforce-backend/README for the real flow this
     // simplifies.
-    const result = await window.Api.digilockerInit('https://www.google.com/');
+    // The server picks the return page (its own /api/kyc/digilocker/return) which tells the
+    // worker to come back to the app and tap "I've completed verification".
+    const result = await window.Api.digilockerInit();
     regState.digilockerId = result.id;
     window.open(result.url, '_system');
-    toast('Complete verification in the browser, then come back and tap "I\'ve completed verification"', 'info');
+    toast(biText('ब्राउज़र में DigiLocker पूरा करें, फिर वापस आकर "I\'ve completed verification" दबाएँ', 'Complete DigiLocker in the browser, then come back and tap "I\'ve completed verification"'), 'info');
     renderDigilockerContinueButton();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -950,7 +953,7 @@ async function checkDigilockerComplete() {
   try {
     const result = await window.Api.digilockerComplete(regState.digilockerId);
     regState.worker = result.worker;
-    toast('Aadhaar verified', 'success');
+    toast(result.pan === 'verified' ? biText('आधार और पैन सत्यापित', 'Aadhaar and PAN verified') : biText('आधार सत्यापित', 'Aadhaar verified'), 'success');
     renderRegStep(4);
   } catch (e) { toast(e.message, 'error'); }
 }

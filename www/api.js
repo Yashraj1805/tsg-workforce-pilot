@@ -132,7 +132,7 @@ const Api = {
   punchSelfie: (id) => apiFetch(`/api/punches/${id}/selfie`),
 
   // ---- KYC ----
-  digilockerInit: (redirectUrl) => apiFetch('/api/kyc/digilocker/init', { method: 'POST', body: { redirectUrl } }),
+  digilockerInit: (redirectUrl) => apiFetch('/api/kyc/digilocker/init', { method: 'POST', body: redirectUrl ? { redirectUrl } : {} }),
   digilockerComplete: (id) => apiFetch(`/api/kyc/digilocker/${id}/complete`),
   panVerify: (pan) => apiFetch('/api/kyc/pan/verify', { method: 'POST', body: { pan } }),
   aadhaarQr: (qrText) => apiFetch('/api/kyc/aadhaar-qr', { method: 'POST', body: { qrText } }),
