@@ -155,6 +155,8 @@ const Api = {
   // ---- Masters ----
   listVendors: () => apiFetch('/api/vendors'),
   createVendor: (v) => apiFetch('/api/vendors', { method: 'POST', body: v }),
+  vendorDigilockerInit: (vendorId) => apiFetch('/api/vendor-kyc/digilocker/init', { method: 'POST', body: vendorId ? { vendorId } : {} }),
+  vendorDigilockerComplete: (id) => apiFetch(`/api/vendor-kyc/digilocker/${id}/complete`),
   updateVendor: (id, v) => apiFetch(`/api/vendors/${id}`, { method: 'PUT', body: v }),
   listJobs: () => apiFetch('/api/jobs'),
   createJob: (j) => apiFetch('/api/jobs', { method: 'POST', body: j }),

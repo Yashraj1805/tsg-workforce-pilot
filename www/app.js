@@ -2586,7 +2586,14 @@ function renderVendorContactKyc(v) {
   return `
     <h4 style="margin-top:16px">Contact person KYC (${esc(v.contact_person || 'authorized contact')})</h4>
     <p class="muted small">Aadhaar + PAN of the vendor's contact person - not the company (Aadhaar only exists for individuals).</p>
-    <div class="kyc-status ${v.contact_aadhaar_qr_at ? 'ok' : ''}">${v.contact_aadhaar_qr_at ? `✅ Aadhaar scanned - ${esc(v.contact_aadhaar_masked || '')}${v.contact_aadhaar_name ? ` · ${esc(v.contact_aadhaar_name)}` : ''}` : '⏳ Aadhaar not scanned yet'}</div>
+    ${v.contact_aadhaar_verified ? `<div class="kyc-status ok">✅ Verified through DigiLocker - ${esc(v.contact_aadhaar_masked || '')}${v.contact_aadhaar_name ? ` · ${esc(v.contact_aadhaar_name)}` : ''}${v.contact_pan_verified && v.contact_pan_number ? ` · PAN ${esc(v.contact_pan_number.slice(0, 2))}XXXXXXX${esc(v.contact_pan_number.slice(-1))}` : ''}</div>` : `
+    <div class="kyc-status">${bi('सबसे आसान: DigiLocker से आधार + पैन एक साथ', 'Easiest: Aadhaar + PAN together through DigiLocker')}</div>
+    <p class="muted small">${bi('लिंक संपर्क व्यक्ति के फ़ोन पर खोलें (या यहीं खोलें), वे आधार OTP डालें, फिर नीचे "Fetch result" दबाएँ।', 'Open the link on the contact person\'s phone (or here), they enter their Aadhaar OTP, then tap "Fetch result" below.')}</p>
+    <button class="btn primary block" onclick="vendorDigilockerStart()">${vendorKyc.digiId ? bi('DigiLocker लिंक दोबारा खोलें', 'Open the DigiLocker link again') : bi('DigiLocker से सत्यापित करें', 'Verify via DigiLocker')}</button>
+    ${vendorKyc.digiUrl ? `<button class="btn secondary block" onclick="vendorDigilockerShare()">${bi('लिंक WhatsApp पर भेजें', 'Send the link on WhatsApp')}</button>` : ''}
+    ${vendorKyc.digiId ? `<button class="btn success block" onclick="vendorDigilockerComplete()">${bi('Fetch result (सत्यापन हो गया)', 'Fetch result (verification done)')}</button>` : ''}
+    <details style="margin-top:10px"><summary class="link-btn small">${bi('DigiLocker नहीं हो पा रहा? कार्ड की फोटो से करें', 'DigiLocker not possible? Use card photos instead')}</summary>`}
+    <div class="kyc-status ${v.contact_aadhaar_qr_at ? 'ok' : ''}" style="margin-top:8px">${v.contact_aadhaar_qr_at ? `✅ Aadhaar scanned - ${esc(v.contact_aadhaar_masked || '')}${v.contact_aadhaar_name ? ` · ${esc(v.contact_aadhaar_name)}` : ''}` : '⏳ Aadhaar not scanned yet'}</div>
     ${vendorKyc.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button - that one works.</div>` : ''}
     <button class="btn secondary block" onclick="vendorPhotoAadhaarQr()">📷 ${v.contact_aadhaar_qr_at ? 'Take the photo again' : 'Take a photo of the Aadhaar QR'}</button>
     <button class="link-btn small" onclick="vendorScanAadhaar()">Try the live scanner instead</button>
@@ -2596,17 +2603,62 @@ function renderVendorContactKyc(v) {
     ${v.contact_pan_number ? `<div class="kyc-status">PAN read from photo: <b>${esc(v.contact_pan_number)}</b>${v.contact_pan_name ? ` · ${esc(v.contact_pan_name)}` : ''}</div>` : ''}
     ${v.contact_pan_tamper_note ? `<div class="gps-status bad">⚠️ Possible tampering: ${esc(v.contact_pan_tamper_note)}</div>` : ''}
     <button class="btn secondary block" onclick="vendorPanPhoto()">📷 ${v.contact_pan_photo_data_url ? 'Retake PAN photo' : 'Take photo of PAN card'}</button>
-    ${v.contact_pan_number && !v.contact_pan_verified ? `<button class="btn primary block" onclick="vendorVerifyPan()">Verify this PAN</button>` : ''}`;
+    ${v.contact_pan_number && !v.contact_pan_verified ? `<button class="btn primary block" onclick="vendorVerifyPan()">Verify this PAN</button>` : ''}
+    ${v.contact_aadhaar_verified ? '' : '</details>'}`;
+}
+async function vendorDigilockerStart() {
+  snapshotVendorForm();
+  try {
+    if (!vendorKyc.digiUrl) {
+      const r = await window.Api.vendorDigilockerInit(editingVendor && editingVendor.id);
+      vendorKyc.digiId = r.id; vendorKyc.digiUrl = r.url;
+    }
+    window.open(vendorKyc.digiUrl, '_system');
+    renderHrMasters();
+  } catch (e) { toast(e.message, 'error'); }
+}
+function vendorDigilockerShare() {
+  const name = (editingVendor && editingVendor.contact_person) || '';
+  const text = `${name ? name + ', ' : ''}TSG Workforce vendor KYC: please open this link and verify your Aadhaar and PAN through DigiLocker: ${vendorKyc.digiUrl}`;
+  const phone = (editingVendor && editingVendor.phone || '').replace(/\D/g, '');
+  window.open(`https://wa.me/${phone ? '91' + phone.slice(-10) : ''}?text=${encodeURIComponent(text)}`, '_system');
+}
+async function vendorDigilockerComplete() {
+  snapshotVendorForm();
+  if (!vendorKyc.digiId) return;
+  try {
+    const r = await window.Api.vendorDigilockerComplete(vendorKyc.digiId);
+    const c = r.contact || {};
+    Object.assign(editingVendor, {
+      contact_aadhaar_masked: c.aadhaarMasked, contact_aadhaar_key: c.aadhaarKey, contact_aadhaar_name: c.aadhaarName,
+      contact_aadhaar_qr_at: editingVendor.contact_aadhaar_qr_at || Date.now(), contact_aadhaar_verified: 1,
+      contact_pan_number: c.panNumber || editingVendor.contact_pan_number, contact_pan_name: c.panName || editingVendor.contact_pan_name,
+      contact_pan_verified: c.panNumber ? 1 : editingVendor.contact_pan_verified, contact_digilocker_request_id: r.id,
+    });
+    if (!editingVendor.contact_person && c.aadhaarName) editingVendor.contact_person = c.aadhaarName;
+    toast(c.nameMismatch ? `${biText('सत्यापित, लेकिन', 'Verified, but')}: ${c.nameMismatch}` : biText('संपर्क व्यक्ति का आधार + पैन सत्यापित', 'Contact person Aadhaar + PAN verified'), c.nameMismatch ? 'info' : 'success');
+    vendorKyc = {};
+    renderHrMasters();
+  } catch (e) { toast(e.message, 'error'); }
 }
 function vendorKycBadge(v) {
   if (v.contact_pan_tamper_note) return `<br/><span class="small" style="color:var(--warn, #b45309)">⚠️ PAN tamper flag</span>`;
-  const aadhaarOk = !!v.contact_aadhaar_qr_at, panOk = !!v.contact_pan_verified;
+  const aadhaarOk = !!(v.contact_aadhaar_qr_at || v.contact_aadhaar_verified), panOk = !!v.contact_pan_verified;
   if (aadhaarOk && panOk) return `<br/><span class="small" style="color:var(--accent, #19a974)">✅ Contact KYC done</span>`;
   if (aadhaarOk || v.contact_pan_number) return `<br/><span class="small muted">⏳ Contact KYC partial</span>`;
   return '';
 }
+// Typed values in the vendor form survive the KYC actions' re-render only if they are
+// copied into editingVendor first (the form renders from it).
+function snapshotVendorForm() {
+  if (!editingVendor) return;
+  const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
+  const map = { nv_name: 'name', nv_gstin: 'gstin', nv_pan: 'pan', nv_contact: 'contact_person', nv_phone: 'phone', nv_cstart: 'contract_start', nv_cend: 'contract_end', nv_status: 'status' };
+  for (const [id, key] of Object.entries(map)) { const v = val(id); if (v !== undefined) editingVendor[key] = v; }
+}
 let vendorKyc = {};
 async function vendorPanPhoto() {
+  snapshotVendorForm();
   const photo = await window.TSGNative.takeDocumentPhoto();
   if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
   toast('Reading PAN card…', 'info');
@@ -2620,6 +2672,7 @@ async function vendorPanPhoto() {
   } catch (e) { toast(e.message, 'error'); }
 }
 async function vendorVerifyPan() {
+  snapshotVendorForm();
   try {
     // vendorId lets the server persist the verified flag straight to the row (only it
     // can - see readVendor in masters.js); for a brand-new vendor not saved yet, there's
@@ -2632,6 +2685,7 @@ async function vendorVerifyPan() {
   } catch (e) { toast(e.message, 'error'); }
 }
 async function vendorScanAadhaar() {
+  snapshotVendorForm();
   const scan = await window.TSGNative.scanQrCode();
   if (!scan.ok) {
     vendorKyc.qrHelp = true;
@@ -2642,6 +2696,7 @@ async function vendorScanAadhaar() {
   try { vendorAadhaarQrAccepted(await window.Api.vendorAadhaarQr(scan.text)); } catch (e) { toast(e.message, 'error'); }
 }
 async function vendorPhotoAadhaarQr() {
+  snapshotVendorForm();
   const r = await window.TSGNative.scanQrFromPhoto();
   if (r.cancelled) return;
   toast('Reading the QR…', 'info');
@@ -2674,6 +2729,8 @@ async function saveVendor() {
     contactAadhaarMasked: editingVendor.contact_aadhaar_masked, contactAadhaarKey: editingVendor.contact_aadhaar_key,
     contactAadhaarName: editingVendor.contact_aadhaar_name, contactAadhaarQrFormat: editingVendor.contact_aadhaar_qr_format,
     contactAadhaarQrSignature: editingVendor.contact_aadhaar_qr_signature, contactAadhaarQrAt: editingVendor.contact_aadhaar_qr_at,
+    // The server re-reads this DigiLocker result and sets both verified flags itself.
+    contactDigilockerRequestId: editingVendor.contact_digilocker_request_id || undefined,
   };
   if (!body.name) { toast('Name required', 'error'); return; }
   try {
