@@ -667,6 +667,12 @@ async function workerRequestOtp(resend, channel) {
   try {
     const result = await window.Api.workerOtpRequest(mobile, channel);
     loginState = { step: 'otp', mobile };
+    // Temporary (Harpreet, 2026-10-14): no WhatsApp/SMS gateway is live yet, so while
+    // DEV_BYPASS is set the server echoes the OTP back instead of delivering it (devOtp)
+    // - skip straight to verifying with that code so entering the mobile number alone
+    // logs a worker in. Nothing to undo later: the day DEV_BYPASS comes off Railway,
+    // devOtp stops arriving and this block simply never runs again.
+    if (result.devOtp) return workerVerifyOtp(result.devOtp);
     renderShell(`
       <div class="card center-card">
         <h3>${t('enterOtp')}</h3>
@@ -678,8 +684,8 @@ async function workerRequestOtp(resend, channel) {
     `);
   } catch (e) { toast(e.message, 'error'); }
 }
-async function workerVerifyOtp() {
-  const otp = document.getElementById('loginOtp').value.trim();
+async function workerVerifyOtp(otpOverride) {
+  const otp = otpOverride || document.getElementById('loginOtp').value.trim();
   try {
     const result = await window.Api.workerOtpVerify(loginState.mobile, otp);
     setSessionData({ token: result.token, role: 'worker', mobile: loginState.mobile, workerId: result.worker.id });
