@@ -193,7 +193,7 @@ async function withLoading(fetcher, onSuccess, loadingLabel) {
   // bare spinner; the label stays for screen readers and for slow networks.
   renderShell(`<div class="card"><div class="skeleton-card" role="status" aria-live="polite" aria-label="${esc(loadingLabel || 'Loading')}">
       <div class="skeleton title"></div><div class="skeleton line"></div><div class="skeleton line short"></div><div class="skeleton block"></div>
-      <div class="skeleton-label">${esc(loadingLabel || bi('लोड हो रहा है…', 'Loading…'))}</div></div></div>`);
+      <div class="skeleton-label">${loadingLabel ? esc(loadingLabel) : bi('लोड हो रहा है…', 'Loading…')}</div></div></div>`);
   try {
     const data = await fetcher();
     onSuccess(data);
@@ -360,7 +360,7 @@ function renderShell(innerHtml) {
   const app = document.getElementById('app');
   const nav = s && !s.assisted ? renderNav(s.role) : '';
   const assistBanner = s && s.assisted ? `<div class="gps-status warn" style="margin:0;border-radius:0">
-      Registering worker <b>${esc(s.mobile)}</b> on ${esc(s.assistedBy || 'Site HR')}'s phone
+      Registering worker <b>${esc(s.mobile)}</b> on ${esc(s.assistedBy || 'Team Lead')}'s phone
       <button class="btn secondary small" style="margin-left:8px" onclick="endAssistedSession()">Exit</button></div>` : '';
   app.innerHTML = assistBanner + `
     <header class="topbar">
@@ -396,7 +396,7 @@ function labelTables(root) {
 // enforces it on every request. The permission list it sends at login is only used
 // here to hide screens and buttons the user would just get a 403 from.
 const ROLE_LABELS = {
-  reporting_manager: 'Reporting Manager', site_hr: 'Site HR', central_hr: 'Central HR',
+  reporting_manager: 'Reporting Manager', site_hr: 'Team Lead', central_hr: 'Central HR',
   location_head: 'Location Head', vendor_coordinator: 'Vendor Coordinator',
   mis_finance: 'MIS / Finance', security: 'Security', system_admin: 'System Admin',
 };
@@ -435,7 +435,7 @@ const ADMIN_SCREENS = [
   { hash: '#/hr/regularisations', icon: 'doc', label: () => t('hrRegularisations'), perms: ['regularisations.read', 'workers.read'] },
   { hash: '#/hr/account', icon: 'user', label: () => t('account'), perms: [] },
 ];
-const ADMIN_ROUTE_PERMS = { '#/hr/worker': ['workers.read'], '#/hr/more': [], '#/hr/logout-confirm': [] };
+const ADMIN_ROUTE_PERMS = { '#/hr/worker': ['workers.read'], '#/hr/more': [], '#/hr/logout-confirm': [], '#/hr/add-worker': ['workers.create_direct'] };
 // onlyRole: shown only to a listed role (a tailored dashboard built for that one role).
 // hiddenIfVisible: hidden only once one of the listed replacement screens is actually
 // visible (perms and all) - not just "this role has a replacement," so a role never
@@ -515,13 +515,27 @@ function renderSplash() {
       <h2>${t('appName')}</h2>
       <p class="muted small">${base === DEFAULT_API_BASE ? `${t('connectedTo')} TSG server ✓` : `${t('connectedTo')} ${esc(base.replace(/^https?:\/\//, ''))}`}</p>
       <p class="muted small" style="margin-top:14px">${bi('यह फ़ोन किसके लिए है? एक बार चुनें।', 'Who is this device for? Choose once.')}</p>
-      <button class="btn primary block" onclick="startWorkerLogin()">${t('roleWorker')}</button>
-      <button class="btn secondary block" onclick="startHrLogin()">${t('roleHr')}</button>
-      <button class="link-btn small" style="margin-top:10px" onclick="renderKioskPair()">🖥️ Gate tablet (kiosk)</button>
-      <button class="link-btn small" style="margin-top:16px" onclick="location.hash='#/settings';render()">${t('serverSettings')}</button>
+      <button class="btn primary big block" style="margin-top:6px" onclick="startWorkerLogin()">👷 ${t('roleWorker')}</button>
+      <div class="login-chooser-divider"><span>${bi('लॉगिन करें इस रूप में', 'Login as')}</span></div>
+      <div class="role-grid">${ADMIN_ROLE_TILES.map(r => `<button class="role-tile" onclick="startHrLogin('${r.role}')">${icon(r.icon)}<span>${bi(r.hi, r.en)}</span></button>`).join('')}</div>
+      <button class="link-btn small" style="margin-top:16px" onclick="renderKioskPair()">🖥️ Gate tablet (kiosk)</button>
+      <button class="link-btn small" style="margin-top:6px" onclick="location.hash='#/settings';render()">${t('serverSettings')}</button>
     </div>
   `);
 }
+// Mirrors rbac.js ROLES — every hr_users role gets its own named door into the same
+// email+password form (server still decides the real role; this is just so nobody has
+// to remember "HR" covers Finance/Security/etc. too).
+const ADMIN_ROLE_TILES = [
+  { role: 'central_hr', icon: 'shield', hi: 'एचआर', en: 'HR' },
+  { role: 'site_hr', icon: 'user', hi: 'टीम लीड', en: 'Team Lead' },
+  { role: 'reporting_manager', icon: 'chart', hi: 'रिपोर्टिंग मैनेजर', en: 'Reporting Manager' },
+  { role: 'location_head', icon: 'pin', hi: 'लोकेशन हेड', en: 'Location Head' },
+  { role: 'vendor_coordinator', icon: 'building', hi: 'वेंडर कोऑर्डिनेटर', en: 'Vendor Coordinator' },
+  { role: 'mis_finance', icon: 'ledger', hi: 'फाइनेंस / एमआईएस', en: 'Finance / MIS' },
+  { role: 'security', icon: 'search', hi: 'सिक्योरिटी', en: 'Security' },
+  { role: 'system_admin', icon: 'key', hi: 'सिस्टम एडमिन', en: 'System Admin' },
+];
 // Hidden escape hatch: 7 taps on the app name within 3 s clears the device mode (and
 // any session) and brings the chooser back - for an admin re-purposing a phone or
 // un-pairing a tablet. Deliberately not a visible button on the kiosk.
@@ -815,7 +829,7 @@ function regAadhaar() {
       ${regState.aadhaarNameWarning ? `<div class="gps-status bad">${biText('आधार पर नाम है', 'Name on Aadhaar is')} "${esc(regState.aadhaarNameWarning)}" - ${biText('नीचे आपका नाम इससे मेल खाना चाहिए।', 'your name below must match it.')}
         <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">${biText('आधार वाला नाम इस्तेमाल करें', 'Use Aadhaar name')}</button></div>` : ''}
       ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('लाइव स्कैनर QR नहीं पढ़ पाया (आधार का QR बहुत घना होता है)। नीचे वाले बटन से उसकी फोटो लें - वह काम करता है।', "The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button below - that one works.")}</div>` : ''}
-      ${!w.aadhaar_qr_at && fails >= 2 ? `<div class="gps-status warn" style="margin-top:8px">${bi('QR बार-बार नहीं पढ़ पा रहा? नीचे OTP से पुष्टि करें, या साइट HR को कॉल करें - वे आपका पंजीकरण कर देंगे।', "QR still not reading after a few tries? Verify with OTP below instead, or call Site HR - they can register you.")}
+      ${!w.aadhaar_qr_at && fails >= 2 ? `<div class="gps-status warn" style="margin-top:8px">${bi('QR बार-बार नहीं पढ़ पा रहा? नीचे OTP से पुष्टि करें, या टीम लीड को कॉल करें - वे आपका पंजीकरण कर देंगे।', "QR still not reading after a few tries? Verify with OTP below instead, or call Team Lead - they can register you.")}
         <button class="btn warn small block" style="margin-top:8px" onclick="callSiteHr()">📞 ${t('callSiteHr')}</button></div>` : ''}
       <button class="btn primary block big" onclick="regPhotoAadhaarQr()">📷 ${w.aadhaar_qr_at ? bi('फिर से फोटो लें', 'Take the photo again') : bi('आधार QR की फोटो लें', 'Take a photo of the Aadhaar QR')}</button>
       <button class="btn secondary block" onclick="regScanAadhaar()">${bi('लाइव स्कैनर आज़माएँ', 'Try the live scanner instead')}</button>
@@ -1027,7 +1041,7 @@ async function regVendorSite() {
           tiles(vendors.map(v => ({ id: v.id, en: v.name, icon: '🏢' })), w.vendor_id, 'regPickVendor')}
         <label style="margin-top:14px">${bi('काम की जगह', 'Work site')}</label>
         ${w.location_id ? `<div class="kyc-status ok">📍 ${esc(regState.siteName || (w.location && w.location.name) || 'Site set')}</div>` : ''}
-        ${isAssisted() ? `<p class="muted small">Site is the Site HR's location.</p>` :
+        ${isAssisted() ? `<p class="muted small">Site is the Team Lead's location.</p>` :
           `<button class="btn ${w.location_id ? 'secondary' : 'primary'} block" onclick="regSiteFromGps()">📍 ${w.location_id ? bi('फिर से जाँचें', 'Check again') : bi('मेरी साइट GPS से पता करें', 'Find my site by GPS')}</button>`}
         ${regNav(5, null, 'renderRegStep(7)', !(w.vendor_id && w.location_id))}
       </div>`);
@@ -1110,14 +1124,14 @@ function renderPending() {
     // false "Registration submitted".
     if (w.status === 'draft') { location.hash = '#/w/register'; render(); return; }
     if (w.status === 'rejected') {
-      speak('आपका पंजीकरण स्वीकार नहीं हुआ। साइट HR से बात करें।', 'Your registration was not approved. Please talk to Site HR.');
+      speak('आपका पंजीकरण स्वीकार नहीं हुआ। टीम लीड से बात करें।', 'Your registration was not approved. Please talk to Team Lead.');
       renderShell(`
         <div class="card center-card">
           <div class="result-mark" style="color:var(--bad);font-size:48px">✕</div>
           <h3>${bi('पंजीकरण स्वीकार नहीं हुआ', 'Registration not approved')}</h3>
           ${w.reject_reason ? `<p><b>${bi('कारण', 'Reason')}:</b> ${esc(w.reject_reason)}</p>` : ''}
-          <p class="muted">${bi('मदद के लिए साइट HR से बात करें।', 'Talk to your Site HR for help.')}</p>
-          ${(w.siteHr && w.siteHr.phone) ? `<a class="btn primary block" href="tel:${esc(w.siteHr.phone)}">📞 ${bi('साइट HR को कॉल करें', 'Call site HR')}</a>` : ''}
+          <p class="muted">${bi('मदद के लिए टीम लीड से बात करें।', 'Talk to your Team Lead for help.')}</p>
+          ${(w.siteHr && w.siteHr.phone) ? `<a class="btn primary block" href="tel:${esc(w.siteHr.phone)}">📞 ${bi('टीम लीड को कॉल करें', 'Call Team Lead')}</a>` : ''}
           <button class="btn secondary block" onclick="renderPending()">${bi('फिर से देखें', 'Check again')}</button>
         </div>`);
       return;
@@ -1126,7 +1140,7 @@ function renderPending() {
       <div class="card center-card">
         <h3>${t('pendingTitle')}</h3>
         <p>${t('pendingBody')}</p>
-        ${(w.siteHr && w.siteHr.phone) ? `<a class="btn secondary block" href="tel:${esc(w.siteHr.phone)}">📞 ${bi('साइट HR को कॉल करें', 'Call site HR')}</a>` : ''}
+        ${(w.siteHr && w.siteHr.phone) ? `<a class="btn secondary block" href="tel:${esc(w.siteHr.phone)}">📞 ${bi('टीम लीड को कॉल करें', 'Call Team Lead')}</a>` : ''}
         <button class="btn secondary block" onclick="renderPending()">${bi('फिर से देखें', 'Check again')}</button>
         ${w.status === 'sent_back' ? `<p class="badge badge-warn">Sent back: ${esc(w.send_back_reason||'')}</p><button class="btn secondary" onclick="location.hash='#/w/register';render()">Edit & resubmit</button>` : ''}
         <div class="worker-summary">
@@ -1497,7 +1511,7 @@ function punchBlockedResult(e) {
   const d = e.data || {};
   const [hi, en] = BLOCK_REASON[d.reason] || ['पंच नहीं हुआ', 'Punch not saved'];
   const detail = d.distanceM != null ? `${d.distanceM} m · GPS ±${Math.round(d.accuracy || 0)} m` : '';
-  showResult(false, hi, en, [esc(e.message), detail, d.reason ? bi('साइट HR को सूचना दी गई', 'Site HR / Security informed') : '']);
+  showResult(false, hi, en, [esc(e.message), detail, d.reason ? bi('टीम लीड को सूचना दी गई', 'Team Lead / Security informed') : '']);
 }
 
 function renderWorkerAttendance() {
@@ -1507,7 +1521,7 @@ function renderWorkerAttendance() {
 
 // ---- My days (BRD §11 screen 9, R12): monthly calendar - green present, red absent,
 // yellow missed punch, grey off day. Tap a day for its in/out times. Worker cannot edit
-// (screen 10): the missed-punch button calls Site HR.
+// (screen 10): the missed-punch button calls Team Lead.
 async function loadWorkerAttendance() {
   renderShell(`<div class="card">${spinnerRow('Loading…')}</div>`);
   try {
@@ -1601,10 +1615,10 @@ function showCalDay(dayStr) {
 }
 function callSiteHr() {
   const w = window._myWorker;
-  // BRD §11 screen 10: the button calls the Site HR at the worker's site; the vendor's
-  // number is only a fallback when no Site HR phone is set up yet.
+  // BRD §11 screen 10: the button calls the Team Lead at the worker's site; the vendor's
+  // number is only a fallback when no Team Lead phone is set up yet.
   const phone = (w && w.siteHr && w.siteHr.phone) || (w && w.vendor && w.vendor.phone);
-  if (!phone) { toast(biText('साइट HR का फ़ोन नंबर अभी सेट नहीं है - अपने सुपरवाइज़र से पूछें', 'No Site HR phone number set up yet - ask your supervisor'), 'error'); return; }
+  if (!phone) { toast(biText('टीम लीड का फ़ोन नंबर अभी सेट नहीं है - अपने सुपरवाइज़र से पूछें', 'No Team Lead phone number set up yet - ask your supervisor'), 'error'); return; }
   toast(t('missedPunchBody'), 'info');
   location.href = 'tel:' + phone;
 }
@@ -1665,15 +1679,17 @@ function renderLogoutConfirm() {
 
 // Email + the user's own password. Accounts (and first-time passwords) come from a System
 // Admin on the Users screen - the login form never creates anything.
-function startHrLogin() {
+function startHrLogin(roleHint) {
   clearSessionData();
-  loginState = { step: 'password' };
+  loginState = { step: 'password', roleHint: roleHint || null };
   const last = localStorage.getItem('tsg_last_hr_email') || '';
+  const tile = ADMIN_ROLE_TILES.find(r => r.role === roleHint);
   renderShell(`
     <div class="card center-card">
-      <div class="login-mark">${icon('shield')}</div>
-      <h3>${t('hrUser')}</h3>
+      <div class="login-mark">${icon(tile ? tile.icon : 'shield')}</div>
+      <h3>${tile ? bi(tile.hi, tile.en) : t('hrUser')}</h3>
       <p class="login-sub">${biText('कंपनी ईमेल और अपना पासवर्ड', 'Company email and your own password')}</p>
+      ${tile ? `<button class="link-btn small" style="margin-top:-8px;margin-bottom:10px" onclick="location.hash='#/';render()">${bi('वापस', 'Back')}</button>` : ''}
       <label>Email</label>
       <input id="hrEmail" class="input" type="email" autocomplete="username" placeholder="name@thesachdevgroup.com" value="${esc(last)}" />
       <label>${t('password')}</label>
@@ -1701,11 +1717,19 @@ async function hrLogin() {
   try {
     const result = await window.Api.hrLogin(email, password);
     localStorage.setItem('tsg_last_hr_email', email);
+    // The role tile picked before login is only a shortcut to the same form - the
+    // account's real role (server-decided) always wins. If they differ, say so once
+    // instead of silently landing somewhere the picked tile didn't promise.
+    const roleHint = loginState.roleHint;
     setSessionData({ token: result.token, role: result.hrUser.role, permissions: result.permissions, email: result.hrUser.email, name: result.hrUser.name, mustChangePassword: !!result.mustChangePassword });
     loginState = {};
     // A temporary password (set by a System Admin) has to be replaced before anything else.
     location.hash = result.mustChangePassword ? '#/hr/account' : adminHomeHash(); render();
     if (result.mustChangePassword) toast(biText('पहले अपना नया पासवर्ड चुनें', 'Choose your own password first'), 'info');
+    else if (roleHint && roleHint !== result.hrUser.role) {
+      const tile = ADMIN_ROLE_TILES.find(r => r.role === result.hrUser.role);
+      toast(biText(`यह खाता ${tile ? tile.hi : result.hrUser.role} के रूप में सेट है`, `This account is set up as ${tile ? tile.en : result.hrUser.role}`), 'info');
+    }
   } catch (e) { toast(e.message, 'error'); if (btn) btn.disabled = false; }
 }
 async function hrChangePassword() {
@@ -1952,7 +1976,7 @@ function renderHrAttendance() {
   );
 }
 // ---- Transfer / exit requests (proposal process 3) ----
-// Managers / Site HR ask; the new site's Site HR accepts a transfer; Central HR completes.
+// Managers / Team Lead ask; the new site's Team Lead accepts a transfer; Central HR completes.
 function renderRequestCard(w, locations, vendors) {
   if (!hasPerm('requests.raise') || hasPerm('workers.manage') || w.status !== 'approved') return '';
   return `<div class="card">
@@ -2117,7 +2141,10 @@ function renderHrWorkers() {
     window._allWorkers = all;
     renderShell(`
       <div class="card">
-        <h3>Workers</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <h3 style="margin:0">Workers</h3>
+          ${hasPerm('workers.create_direct') ? `<button class="btn primary small" onclick="location.hash='#/hr/add-worker';render()">+ ${bi('वर्कर जोड़ें', 'Add worker')}</button>` : ''}
+        </div>
         <input id="wk_search" class="input" placeholder="Search name or mobile" oninput="filterWorkerList()" />
         <div class="filter-row">
           <select id="wk_status" class="input" onchange="filterWorkerList()">
@@ -2908,7 +2935,7 @@ async function kioskPunch(workerId, next) {
     const d = e.data || {};
     const [hi, en] = BLOCK_REASON[d.reason] || ['पंच नहीं हुआ', 'Punch not saved'];
     // Second line tells the guard what to do, not just what failed.
-    const el = showResult(false, hi, en, [esc(e.message), bi('दोबारा कोशिश करें या गार्ड/साइट HR को बताएँ', 'Try again, or tell the guard / Site HR')], renderKiosk);
+    const el = showResult(false, hi, en, [esc(e.message), bi('दोबारा कोशिश करें या गार्ड/टीम लीड को बताएँ', 'Try again, or tell the guard / Team Lead')], renderKiosk);
     setTimeout(() => { if (el.isConnected) el.querySelector('.result-close').onclick(); }, 8000);
   } finally { kioskBusy = false; }
 }
@@ -2972,7 +2999,7 @@ async function kioskRetire(id) {
   try { await window.Api.setKioskStatus(id, 'retired'); renderHrKiosks(); } catch (e) { toast(e.message, 'error'); }
 }
 
-// ---------------- Site HR: register a worker on HR's phone (BRD design rule 8) ----------------
+// ---------------- Team Lead: register a worker on the Team Lead's phone (BRD design rule 8) ----------------
 // The worker's own OTP (sent to their mobile) unlocks a short-lived "assisted" worker
 // session; this phone then runs the normal registration wizard for them. HR's own
 // session is set aside and restored when the registration is submitted or HR exits.
@@ -3014,6 +3041,49 @@ async function assistVerifyOtp() {
     location.hash = '#/w/register'; render();
   } catch (e) { toast(e.message, 'error'); }
 }
+// ---- Add worker directly (team lead creates the login; worker only logs in and
+// clears KYC themselves — see rbac.js workers.create_direct) ----
+function renderHrAddWorker() {
+  const s = requireHr(); if (!s) return;
+  withLoading(
+    () => Promise.all([window.Api.listVendors(), window.Api.listJobs(), s.role === 'central_hr' ? window.Api.listLocations() : Promise.resolve(null)]),
+    ([vendors, jobs, locations]) => {
+      const opt = (x) => `<option value="${x.id}">${esc(x.name)}</option>`;
+      renderShell(`
+        <div class="card">
+          <h3>${bi('वर्कर जोड़ें', 'Add worker')}</h3>
+          <p class="muted small">${bi('यहाँ भरी जानकारी से वर्कर का लॉगिन बन जाता है। वर्कर खुद अपने मोबाइल नंबर और OTP से लॉगिन करके आधार/पैन पूरा करेगा - उसके बाद ही पंच-इन शुरू होगा।', "This creates the worker's login. They log in themselves with their mobile number and OTP, then complete Aadhaar/PAN - only after that can they punch in.")}</p>
+          <label>${t('name')}</label><input id="aw_name" class="input" />
+          <label>${t('mobileNumber')}</label><input id="aw_mobile" class="input" maxlength="10" inputmode="numeric" placeholder="98xxxxxxxx" />
+          <label>${t('designation')}</label>
+          <select id="aw_job" class="input"><option value="">${biText('- चुनें -', '- Select -')}</option>${jobs.map(opt).join('')}</select>
+          <label>${t('vendor')}</label>
+          <select id="aw_vendor" class="input"><option value="">${biText('- चुनें -', '- Select -')}</option>${vendors.map(opt).join('')}</select>
+          ${locations ? `
+          <label>${t('location')}</label>
+          <select id="aw_location" class="input"><option value="">${biText('- चुनें -', '- Select -')}</option>${locations.map(opt).join('')}</select>` :
+          `<p class="muted small">${bi('साइट अपने आप आपकी लोकेशन पर सेट होगी।', 'Site is set to your own location automatically.')}</p>`}
+          <button class="btn primary block" onclick="hrAddWorkerSubmit()">${bi('वर्कर जोड़ें', 'Add worker')}</button>
+        </div>`);
+    });
+}
+async function hrAddWorkerSubmit() {
+  const name = fieldVal('aw_name').trim();
+  const mobile = fieldVal('aw_mobile').trim();
+  if (!name) { toast(biText('नाम ज़रूरी है', 'Name is required'), 'error'); return; }
+  if (!/^\d{10}$/.test(mobile)) { toast(t('invalidMobile'), 'error'); return; }
+  try {
+    const w = await window.Api.createWorkerDirect({
+      name, mobile,
+      jobId: fieldVal('aw_job') || null,
+      vendorId: fieldVal('aw_vendor') || null,
+      locationId: fieldVal('aw_location') || null,
+    });
+    toast(biText(`${w.name} जुड़ गए - अब वे लॉगिन कर सकते हैं`, `${w.name} added - they can now log in`), 'success');
+    renderHrAddWorker();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 async function endAssistedSession() {
   try { await window.Api.logout(); } catch (e) { /* ended or offline - the server idles it out */ }
   let hr = null;
@@ -3262,7 +3332,7 @@ function renderUserForm(roles, locations, vendors) {
       <h3>${isNew ? 'Add user' : 'Edit: ' + esc(u.email)}</h3>
       <label>${t('name')}</label><input id="au_name" class="input" value="${esc(u.name || '')}" />
       ${isNew ? `<label>Email</label><input id="au_email" class="input" placeholder="name@thesachdevgroup.com" />` : ''}
-      <label>Mobile (Site HR: workers' missed-punch button calls this)</label><input id="au_phone" class="input" maxlength="10" inputmode="numeric" value="${esc(u.phone || '')}" />
+      <label>Mobile (Team Lead: workers' missed-punch button calls this)</label><input id="au_phone" class="input" maxlength="10" inputmode="numeric" value="${esc(u.phone || '')}" />
       <label>Role</label>
       <select id="au_role" class="input" onchange="syncUserScopeFields()">${roles.map(r => `<option value="${r.id}" ${u.role === r.id ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select>
       <div id="au_loc_wrap"><label>${t('location')}</label>
@@ -3445,6 +3515,7 @@ function render() {
     '#/hr/requests': renderHrRequests,
     '#/kiosk': renderKiosk,
     '#/hr/assist': renderHrAssist,
+    '#/hr/add-worker': renderHrAddWorker,
     '#/hr/gate': renderHrGate,
     '#/hr/logout-confirm': renderHrLogoutConfirm,
   };

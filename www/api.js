@@ -103,7 +103,7 @@ const Api = {
   resetAdminPassword: (id, password) => apiFetch('/api/admin-users/' + id + '/reset-password', { method: 'POST', body: { password } }),
   getAdminMe: () => apiFetch('/api/auth/me'),
   logout: () => apiFetch('/api/auth/logout', { method: 'POST' }),
-  // Site HR assisted registration: OTP goes to the worker's mobile.
+  // Team Lead assisted registration: OTP goes to the worker's mobile.
   assistOtpRequest: (mobile, channel) => apiFetch('/api/assisted/otp/request', { method: 'POST', body: { mobile, channel } }),
   assistOtpVerify: (mobile, otp) => apiFetch('/api/assisted/otp/verify', { method: 'POST', body: { mobile, otp } }),
 
@@ -117,6 +117,7 @@ const Api = {
 
   // ---- HR: workers ----
   listWorkers: (status) => apiFetch('/api/workers' + (status ? `?status=${encodeURIComponent(status)}` : '')),
+  createWorkerDirect: (body) => apiFetch('/api/workers', { method: 'POST', body }),
   getWorkerById: (id) => apiFetch('/api/workers/' + id),
   absenteeismRisk: (id) => apiFetch('/api/workers/' + id + '/absenteeism-risk'),
   approveWorker: (id, manager) => apiFetch(`/api/workers/${id}/approve`, { method: 'POST', body: manager }),

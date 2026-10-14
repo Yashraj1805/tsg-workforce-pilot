@@ -139,7 +139,7 @@ function renderCentralHrDashboard() {
     });
 }
 
-// ---- Site HR (BRD: registers workers in person, raises missed-punch requests,
+// ---- Team Lead (BRD: registers workers in person, raises missed-punch requests,
 // gate check; cannot approve). Their day is a task list, so the home is one. ----
 function renderSiteHrDashboard() {
   const s = requireHr(); if (!s) return;

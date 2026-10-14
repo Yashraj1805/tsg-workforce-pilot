@@ -402,7 +402,7 @@ details summary { cursor: pointer; margin-top: 10px; padding: 8px 0; min-height:
 
 .dash-loc { padding: 8px 0; } .dash-loc-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
 .bar-fill.warn { background: var(--warn-gradient); } .bar-fill.bad { background: linear-gradient(135deg, #f0495f, #c22233); }
-/* Task rows (Site HR / System Admin "to do" lists) and month-end checklist steps (Finance). */
+/* Task rows (Team Lead / System Admin "to do" lists) and month-end checklist steps (Finance). */
 .dash-task { display: flex; align-items: center; gap: 12px; padding: 11px 12px; margin: 6px 0; border-radius: var(--radius-sm); background: var(--primary-tint); cursor: pointer; }
 .dash-task:active { transform: scale(0.98); }
 .dash-task-icon { width: 34px; height: 34px; border-radius: var(--radius-xs); background: #fff; color: var(--primary); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
@@ -683,3 +683,11 @@ a.btn.secondary { color: var(--primary-dark); }
 /* ---- Single-language mode: the only language shown is the primary text, full size ---- */
 .bi-en.solo, .bi-hi.solo { font-size: inherit; font-weight: inherit; color: inherit; opacity: 1; margin-left: 0; display: inline; }
 h3 .bi-en.solo { font-size: inherit; }
+
+/* ---- Login chooser: Worker is the one big door; admin roles are a picked-not-typed grid ---- */
+.login-chooser-divider { display: flex; align-items: center; gap: 10px; margin: 22px 0 14px; color: var(--muted); font-size: 12.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }
+.login-chooser-divider::before, .login-chooser-divider::after { content: ''; flex: 1; height: 1px; background: var(--border, #e3e5f0); }
+.role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.role-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border, #e3e5f0); background: var(--surface, #fff); color: var(--text); font-size: 12.5px; font-weight: 700; text-align: center; cursor: pointer; }
+.role-tile svg { width: 22px; height: 22px; color: var(--primary); }
+.role-tile:active { transform: scale(0.97); background: var(--primary-tint); }
