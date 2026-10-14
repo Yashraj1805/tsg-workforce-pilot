@@ -13,21 +13,12 @@ const GPS_ACCURACY_LIMIT_M = 100; // fallback if a location has no accuracy_limi
 function fmtTime(ts) { if (!ts) return '--'; const d = new Date(ts); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-// ---------------- Voice (BRD design rule 2, R11) ----------------
-// Reads a screen or a result aloud in the worker's chosen language (Hindi by default).
-// On by default for worker screens - "Many workers can read very little" - and can be
-// switched off from the worker menu. `force` speaks even when voice is off (Listen again).
-const VOICE_KEY = 'tsg_voice';
-function voiceOn() { try { return localStorage.getItem(VOICE_KEY) !== 'off'; } catch (e) { return true; } }
-function setVoice(on) { try { localStorage.setItem(VOICE_KEY, on ? 'on' : 'off'); } catch (e) { /* ignore */ } if (!on) stopVoice(); }
-function speak(hi, en, force) {
-  if (!force && !voiceOn()) return;
-  if (!window.TSGNative || !window.TSGNative.speakText) return;
-  const useHindi = currentLang !== 'en';
-  const text = (useHindi ? hi : en) || hi || en;
-  if (text) window.TSGNative.speakText(String(text).replace(/<[^>]+>/g, ''), useHindi ? 'hi-IN' : 'en-IN');
-}
-function stopVoice() { if (window.TSGNative && window.TSGNative.stopSpeaking) window.TSGNative.stopSpeaking(); }
+// ---------------- Voice (disabled 2026-10-13 per Harpreet) ----------------
+// Read-aloud (BRD design rule 2, R11) is switched off app-wide. Kept as no-ops rather
+// than stripped from every call site so this is a one-line revert if it comes back; the
+// native bridge methods (speakText/stopSpeaking) are simply never invoked now.
+function speak() {}
+function stopVoice() {}
 
 // Design rule 9 (low-cost phones, weak networks): photos are shrunk on the phone before
 // upload - a full-resolution camera frame is several MB.
@@ -134,7 +125,7 @@ function spinnerRow(label) {
   return `<div class="spinner-row" role="status" aria-live="polite"><div class="spinner"></div><span>${label}</span></div>`;
 }
 function errorState(message) {
-  return `<div class="empty-state"><div class="empty-icon">${icon('warn')}</div><p>${esc(message)}</p><button class="btn secondary" onclick="render()">Retry</button></div>`;
+  return `<div class="empty-state"><div class="empty-icon">${icon('warn')}</div><p>${esc(message)}</p><button class="btn secondary" onclick="render()">${biText('फिर कोशिश करें', 'Retry')}</button></div>`;
 }
 
 // ---------------- Toasts ----------------
@@ -777,13 +768,12 @@ function regConsent() {
       ${regHeader(1, 'सहमति', 'Consent')}
       ${currentLang !== 'en' ? `<p class="consent-text bi-hi">${esc(c.hi)}</p>` : ''}
       ${currentLang !== 'hi' ? `<p class="consent-text bi-en">${esc(c.en)}</p>` : ''}
-      <button class="btn secondary small" onclick="speak(regState.opts.consent.hi, regState.opts.consent.en, true)">🔊 ${bi('फिर से सुनें', 'Listen again')}</button>
       <label class="consent-row" style="margin-top:14px"><input type="checkbox" id="f_consent" ${accepted ? 'checked' : ''} /><span>${bi('मैं सहमत हूँ', 'I agree')}</span></label>
       ${regNav(null, null, 'regConsentNext()')}
     </div>`);
 }
 async function regConsentNext() {
-  if (!document.getElementById('f_consent').checked) { toast('Tick "I agree" to continue', 'error'); return; }
+  if (!document.getElementById('f_consent').checked) { toast(biText('"मैं सहमत हूँ" पर टिक करें', 'Tick "I agree" to continue'), 'error'); return; }
   try {
     regState.worker = await window.Api.giveConsent(regState.opts.consent.version, currentLang);
     renderRegStep(2);
@@ -806,30 +796,32 @@ function regPhoto() {
 }
 async function regCapturePhoto() {
   const res = await window.TSGNative.takeSelfie(isAssisted() ? 'REAR' : 'FRONT');
-  if (!res.ok) { toast('Camera failed: ' + res.error, 'error'); return; }
+  if (!res.ok) { toast(biText('कैमरा नहीं चला: ', 'Camera failed: ') + res.error, 'error'); return; }
   const small = await shrinkDataUrl(res.dataUrl, 960, 0.8);
-  toast('Checking photo…', 'info');
+  toast(biText('फोटो जाँची जा रही है…', 'Checking photo…'), 'info');
   if (await regSave({ photoDataUrl: small })) renderRegStep(2);
 }
 
 // ---- 3 Aadhaar QR (screen 6) - fills name, father's name, DOB, gender, address ----
 function regAadhaar() {
   const w = regState.worker;
+  const fails = regState.aadhaarQrFails || 0;
   renderShell(`
     <div class="card">
       ${regHeader(3, 'आधार कार्ड', 'Aadhaar card')}
       ${w.aadhaar_qr_at
         ? `<div class="kyc-status ok">✅ ${bi('आधार स्कैन हो गया', 'Aadhaar scanned')} - ${esc(w.aadhaar_masked || '')}</div>`
         : `<p class="muted small">${bi('आधार कार्ड के QR की <b>फोटो लें</b> - आपकी जानकारी अपने-आप भर जाएगी। कार्ड सीधा रखें, QR फोटो में बड़ा दिखे, रोशनी अच्छी हो।', 'Take a <b>photo</b> of the QR on the Aadhaar card - your details fill in by themselves. Card flat, QR large in the photo, good light.')}</p>`}
-      ${regState.aadhaarNameWarning ? `<div class="gps-status bad">Name on Aadhaar is "${esc(regState.aadhaarNameWarning)}" - your name below must match it.
-        <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">Use Aadhaar name</button></div>` : ''}
+      ${regState.aadhaarNameWarning ? `<div class="gps-status bad">${biText('आधार पर नाम है', 'Name on Aadhaar is')} "${esc(regState.aadhaarNameWarning)}" - ${biText('नीचे आपका नाम इससे मेल खाना चाहिए।', 'your name below must match it.')}
+        <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">${biText('आधार वाला नाम इस्तेमाल करें', 'Use Aadhaar name')}</button></div>` : ''}
       ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('लाइव स्कैनर QR नहीं पढ़ पाया (आधार का QR बहुत घना होता है)। नीचे वाले बटन से उसकी फोटो लें - वह काम करता है।', "The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button below - that one works.")}</div>` : ''}
+      ${!w.aadhaar_qr_at && fails >= 2 ? `<div class="gps-status warn" style="margin-top:8px">${bi('QR बार-बार नहीं पढ़ पा रहा? नीचे OTP से पुष्टि करें, या साइट HR को कॉल करें - वे आपका पंजीकरण कर देंगे।', "QR still not reading after a few tries? Verify with OTP below instead, or call Site HR - they can register you.")}
+        <button class="btn warn small block" style="margin-top:8px" onclick="callSiteHr()">📞 ${t('callSiteHr')}</button></div>` : ''}
       <button class="btn primary block big" onclick="regPhotoAadhaarQr()">📷 ${w.aadhaar_qr_at ? bi('फिर से फोटो लें', 'Take the photo again') : bi('आधार QR की फोटो लें', 'Take a photo of the Aadhaar QR')}</button>
       <button class="btn secondary block" onclick="regScanAadhaar()">${bi('लाइव स्कैनर आज़माएँ', 'Try the live scanner instead')}</button>
-      ${w.aadhaar_qr_at ? `
-        <div class="kyc-status ${w.aadhaar_verified ? 'ok' : ''}" style="margin-top:14px">${w.aadhaar_verified ? '✅ ' + bi('OTP से पुष्टि हो गई', 'Verified with OTP') : '⏳ ' + bi('अब OTP से पुष्टि करें', 'Now verify with OTP')}</div>
-        ${!w.aadhaar_verified ? `<button class="btn primary block" onclick="startDigilocker()">🔐 ${bi('आधार OTP से पुष्टि करें', 'Verify Aadhaar with OTP')}</button>
-          <p class="muted small">${bi('OTP आपके आधार से जुड़े मोबाइल पर आएगा।', 'The OTP goes to the mobile linked to your Aadhaar.')}</p>` : ''}` : ''}
+      <div class="kyc-status ${w.aadhaar_verified ? 'ok' : ''}" style="margin-top:14px">${w.aadhaar_verified ? '✅ ' + bi('OTP से पुष्टि हो गई', 'Verified with OTP') : '⏳ ' + bi('अब OTP से पुष्टि करें', 'Now verify with OTP')}</div>
+      ${!w.aadhaar_verified ? `<button class="btn primary block" onclick="startDigilocker()">🔐 ${bi('आधार OTP से पुष्टि करें', 'Verify Aadhaar with OTP')}</button>
+        <p class="muted small">${w.aadhaar_qr_at ? bi('OTP आपके आधार से जुड़े मोबाइल पर आएगा।', 'The OTP goes to the mobile linked to your Aadhaar.') : bi('QR की फोटो काम न आए तो यह भी चलेगा - OTP आपके आधार से जुड़े मोबाइल पर आएगा।', "This works even without the QR photo - the OTP goes to the mobile linked to your Aadhaar.")}</p>` : ''}
       ${w.aadhaar_qr_at || w.name ? `
         <label>${t('fullName')}</label><input id="f_name" class="input" value="${esc(w.name||'')}" />
         <label>${t('fatherName')}</label><input id="f_father" class="input" value="${esc(w.father_name||'')}" />
@@ -850,34 +842,41 @@ async function regScanAadhaar() {
   const scan = await window.TSGNative.scanQrCode();
   if (!scan.ok) {
     // The Aadhaar Secure QR is very dense and the live scanner often can't lock onto a
-    // printed card - offer the still-photo route rather than failing silently.
+    // printed card - offer the still-photo route rather than failing silently. After a
+    // couple of failures regAadhaar() surfaces the OTP-only and Site-HR escape hatches.
     regState.qrHelp = true;
-    if (!scan.cancelled) toast(scan.error, 'error');
+    if (!scan.cancelled) { toast(scan.error, 'error'); regState.aadhaarQrFails = (regState.aadhaarQrFails || 0) + 1; }
     renderRegStep(3);
-    speak('QR नहीं पढ़ा गया। QR की फोटो लें।', "Couldn't read the QR. Take a photo of the QR instead.");
     return;
   }
-  try { aadhaarQrAccepted(await window.Api.aadhaarQr(scan.text)); } catch (e) { toast(e.message, 'error'); }
+  try { aadhaarQrAccepted(await window.Api.aadhaarQr(scan.text)); } catch (e) { toast(e.message, 'error'); regState.aadhaarQrFails = (regState.aadhaarQrFails || 0) + 1; }
 }
 // Fallback: a full-resolution photo of the QR, read by ML Kit on the phone or, failing
 // that, by the server.
 async function regPhotoAadhaarQr() {
   const r = await window.TSGNative.scanQrFromPhoto();
   if (r.cancelled) return;
-  toast('Reading the QR…', 'info');
+  toast(biText('QR पढ़ा जा रहा है…', 'Reading the QR…'), 'info');
   try {
     if (r.ok) return aadhaarQrAccepted(await window.Api.aadhaarQr(r.text));
     if (r.dataUrl) return aadhaarQrAccepted(await window.Api.aadhaarQrImage(r.dataUrl));
-    toast(r.error || 'Could not take the photo', 'error');
-  } catch (e) { toast(e.message, 'error'); }
+    regState.aadhaarQrFails = (regState.aadhaarQrFails || 0) + 1;
+    toast(r.error || biText('फोटो नहीं ले पाया', 'Could not take the photo'), 'error');
+    renderRegStep(3);
+  } catch (e) {
+    regState.aadhaarQrFails = (regState.aadhaarQrFails || 0) + 1;
+    toast(e.message, 'error');
+    renderRegStep(3);
+  }
 }
 function aadhaarQrAccepted(result) {
   regState.qrHelp = false;
+  regState.aadhaarQrFails = 0;
   regState.worker = result.worker;
   // R05: names must match. The server won't block the scan (the typed name may just be
   // a draft), but submit will - so say so now, with the Aadhaar name to copy.
   regState.aadhaarNameWarning = result.nameMatches === false ? result.name : null;
-  toast(`Aadhaar scanned (…${result.last4})`, result.nameMatches === false ? 'error' : 'success');
+  toast(biText(`आधार स्कैन हुआ (…${result.last4})`, `Aadhaar scanned (…${result.last4})`), result.nameMatches === false ? 'error' : 'success');
   renderRegStep(3);
 }
 function useAadhaarName(btn) {
@@ -888,7 +887,7 @@ function useAadhaarName(btn) {
 async function regAadhaarNext() {
   const get = id => document.getElementById(id).value.trim();
   const fields = { name: get('f_name'), fatherName: get('f_father'), dob: get('f_dob'), gender: get('f_gender'), address: get('f_address'), emergencyContact: get('f_emg') };
-  if (!fields.name) { toast('Name is required', 'error'); return; }
+  if (!fields.name) { toast(biText('नाम ज़रूरी है', 'Name is required'), 'error'); return; }
   regSave(fields, 4);
 }
 
@@ -905,12 +904,12 @@ function regPan() {
       ${w.pan_verified && !w.pan_photo_data_url ? `<p class="muted small">${bi('पैन DigiLocker से सत्यापित है - रिकॉर्ड के लिए कार्ड की एक फोटो लें।', 'PAN is verified through DigiLocker - take one photo of the card for the record.')}</p>` : ''}
       <button class="btn ${w.pan_verified && !w.pan_photo_data_url ? 'primary' : 'secondary'} block" onclick="regPanPhoto()">📷 ${w.pan_photo_data_url ? bi('पैन की फोटो फिर से लें', 'Retake PAN photo') : bi('पैन कार्ड की फोटो लें', 'Take photo of PAN card')}</button>
       ${!w.pan_verified ? `
-        ${regState.panRead ? `<div class="kyc-status">PAN read from photo: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
-          <button class="btn primary block" onclick="verifyPan(true)">Yes, verify this PAN</button>` : ''}
+        ${regState.panRead ? `<div class="kyc-status">${biText('फोटो से पैन पढ़ा गया', 'PAN read from photo')}: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
+          <button class="btn primary block" onclick="verifyPan(true)">${biText('हाँ, यह पैन सत्यापित करें', 'Yes, verify this PAN')}</button>` : ''}
         ${regState.panManual ? `
           <input id="f_pan" class="input" maxlength="10" placeholder="ABCDE1234F" style="text-transform:uppercase" />
-          <button class="btn secondary block" onclick="verifyPan(false)">Verify PAN</button>
-        ` : `<button class="link-btn small" onclick="regState.panManual=true;renderRegStep(4)">Can't take a photo? Type the PAN instead</button>`}
+          <button class="btn secondary block" onclick="verifyPan(false)">${biText('पैन सत्यापित करें', 'Verify PAN')}</button>
+        ` : `<button class="link-btn small" onclick="regState.panManual=true;renderRegStep(4)">${biText('फोटो नहीं ले पा रहे? पैन टाइप करें', "Can't take a photo? Type the PAN instead")}</button>`}
       ` : ''}
       ${(!w.aadhaar_verified || !w.pan_verified) && regState.opts.devSkipAllowed ? `
         <div class="gps-status warn" style="margin-top:16px">
@@ -928,7 +927,7 @@ async function skipKycDev() {
   try {
     const result = await window.Api.skipKycDev();
     regState.worker = result.worker;
-    toast('KYC skipped (dev mode)', 'success');
+    toast(biText('KYC छोड़ दिया गया (dev mode)', 'KYC skipped (dev mode)'), 'success');
     renderRegStep(4);
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -953,12 +952,12 @@ function renderDigilockerContinueButton() {
   if (!container) return;
   const btn = document.createElement('button');
   btn.className = 'btn primary block';
-  btn.textContent = "I've completed verification";
+  btn.textContent = biText('मैंने सत्यापन पूरा कर लिया है', "I've completed verification");
   btn.onclick = checkDigilockerComplete;
   container.appendChild(btn);
 }
 async function checkDigilockerComplete() {
-  if (!regState.digilockerId) { toast('Start DigiLocker verification first', 'error'); return; }
+  if (!regState.digilockerId) { toast(biText('पहले DigiLocker सत्यापन शुरू करें', 'Start DigiLocker verification first'), 'error'); return; }
   try {
     const result = await window.Api.digilockerComplete(regState.digilockerId);
     regState.worker = result.worker;
@@ -969,8 +968,8 @@ async function checkDigilockerComplete() {
 // R04: PAN by photo - the server reads the number (OCR) and the worker only confirms it.
 async function regPanPhoto() {
   const photo = await window.TSGNative.takeDocumentPhoto();
-  if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
-  toast('Reading PAN card…', 'info');
+  if (!photo.ok) { toast(biText('कैमरा नहीं चला: ', 'Camera failed: ') + photo.error, 'error'); return; }
+  toast(biText('पैन कार्ड पढ़ा जा रहा है…', 'Reading PAN card…'), 'info');
   try {
     regState.panRead = await window.Api.panPhoto(await shrinkDataUrl(photo.dataUrl, 1600, 0.85));
     regState.worker = await window.Api.getMe();
@@ -986,19 +985,19 @@ async function verifyPan(fromPhoto) {
   let pan;
   if (!fromPhoto) {
     pan = document.getElementById('f_pan').value.trim().toUpperCase();
-    if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(pan)) { toast('Enter a valid PAN, e.g. ABCDE1234F', 'error'); return; }
+    if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(pan)) { toast(biText('सही पैन डालें, जैसे ABCDE1234F', 'Enter a valid PAN, e.g. ABCDE1234F'), 'error'); return; }
   }
   try {
     const result = await window.Api.panVerify(pan); // no pan = verify the number read from the photo
     regState.worker = result.worker;
-    toast('PAN verified', 'success');
+    toast(biText('पैन सत्यापित हो गया', 'PAN verified'), 'success');
     renderRegStep(4);
   } catch (e) { toast(e.message, 'error'); }
 }
 // Design rule 4: "bank passbook if needed" - optional.
 async function regPassbookPhoto() {
   const photo = await window.TSGNative.takeDocumentPhoto();
-  if (!photo.ok) { toast('Camera failed: ' + photo.error, 'error'); return; }
+  if (!photo.ok) { toast(biText('कैमरा नहीं चला: ', 'Camera failed: ') + photo.error, 'error'); return; }
   if (await regSave({ bankPassbookDataUrl: await shrinkDataUrl(photo.dataUrl, 1600, 0.85) })) renderRegStep(4);
 }
 
@@ -1092,7 +1091,7 @@ function regReviewRender() {
 async function regSubmit() {
   try {
     await window.Api.submitMe();
-    toast('Submitted for HR approval', 'success');
+    toast(biText('HR की मंज़ूरी के लिए भेज दिया', 'Submitted for HR approval'), 'success');
     if (isAssisted()) return endAssistedSession();
     location.hash = '#/w/pending'; render();
   } catch (e) {
@@ -1556,17 +1555,23 @@ function renderWorkerCalendar() {
     cells.push(`<button class="cal-cell ${kind}" onclick="showCalDay('${dayStr}')">${d}</button>`);
   }
   const shift = (delta) => { const dt = new Date(Date.UTC(y, m - 1 + delta, 1)); return dt.toISOString().slice(0, 7); };
-  const monthName = first.toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-  speak(`${counts.present} दिन हाज़िर, ${counts.absent} दिन ग़ैरहाज़िर`, `${counts.present} days present, ${counts.absent} days absent`);
+  const locale = currentLang === 'en' ? 'en-IN' : 'hi-IN';
+  const monthName = first.toLocaleDateString(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  // Hindi weekday initials, Sunday first (same column order as the English S M T W T F S).
+  const dowLetters = currentLang === 'en' ? ['S', 'M', 'T', 'W', 'T', 'F', 'S'] : ['र', 'सो', 'मं', 'बु', 'गु', 'शु', 'श'];
   renderShell(`
     <div class="card">
       <h3>${bi('मेरे दिन', 'My days')}</h3>
+      <div class="worker-summary" style="text-align:center;margin-bottom:12px">
+        <div style="font-size:40px;font-weight:800;line-height:1;color:var(--primary-dark)">${counts.present}</div>
+        <div class="muted small">${bi('इस महीने हाज़िर दिन', 'Present days this month')}</div>
+      </div>
       <div class="cal-head">
         <button class="btn secondary small" onclick="window._calMonth='${shift(-1)}';renderWorkerCalendar()">‹</button>
         <b>${monthName}</b>
         <button class="btn secondary small" ${month >= todayStr(Date.now()).slice(0, 7) ? 'disabled' : ''} onclick="window._calMonth='${shift(1)}';renderWorkerCalendar()">›</button>
       </div>
-      <div class="cal-grid">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(x => `<div class="cal-dow">${x}</div>`).join('')}${cells.join('')}</div>
+      <div class="cal-grid">${dowLetters.map(x => `<div class="cal-dow">${x}</div>`).join('')}${cells.join('')}</div>
       <div class="cal-legend">
         <span><i class="present"></i>${bi('हाज़िर', 'Present')} ${counts.present}</span>
         <span><i class="absent"></i>${bi('ग़ैरहाज़िर', 'Absent')} ${counts.absent}</span>
@@ -1579,14 +1584,19 @@ function renderWorkerCalendar() {
     </div>
   `);
 }
+function formatCalDate(dayStr) {
+  const d = new Date(dayStr + 'T12:00:00Z');
+  const locale = currentLang === 'en' ? 'en-IN' : 'hi-IN';
+  return d.toLocaleDateString(locale, { day: 'numeric', month: 'long', timeZone: 'UTC' });
+}
 function showCalDay(dayStr) {
   const { kind, st, reg } = dayInfo(dayStr);
   const label = { present: ['हाज़िर', 'Present'], absent: ['ग़ैरहाज़िर', 'Absent'], missed: ['पंच आउट छूटा', 'Missed punch-out'], off: ['छुट्टी', 'Off day'], future: ['-', '-'] }[kind];
   document.getElementById('calDay').innerHTML = `
     <div class="worker-summary">
-      <b>${dayStr}</b> · ${bi(label[0], label[1])}
-      <div class="small">In ${fmtTime(st.inTime)} · Out ${fmtTime(st.outTime)}${st.hours ? ` · ${st.hours} h` : ''}</div>
-      ${reg ? `<div class="small muted">Missed-punch request: ${esc(reg.status)}</div>` : ''}
+      <b>${esc(formatCalDate(dayStr))}</b> · ${bi(label[0], label[1])}
+      <div class="small">${biText('इन', 'In')} ${fmtTime(st.inTime)} · ${biText('आउट', 'Out')} ${fmtTime(st.outTime)}${st.hours ? ` · ${st.hours} h` : ''}</div>
+      ${reg ? `<div class="small muted">${biText('मिस्ड-पंच अनुरोध', 'Missed-punch request')}: ${esc(reg.status)}</div>` : ''}
     </div>`;
 }
 function callSiteHr() {
@@ -1594,7 +1604,7 @@ function callSiteHr() {
   // BRD §11 screen 10: the button calls the Site HR at the worker's site; the vendor's
   // number is only a fallback when no Site HR phone is set up yet.
   const phone = (w && w.siteHr && w.siteHr.phone) || (w && w.vendor && w.vendor.phone);
-  if (!phone) { toast('No Site HR phone number set up yet - ask your supervisor', 'error'); return; }
+  if (!phone) { toast(biText('साइट HR का फ़ोन नंबर अभी सेट नहीं है - अपने सुपरवाइज़र से पूछें', 'No Site HR phone number set up yet - ask your supervisor'), 'error'); return; }
   toast(t('missedPunchBody'), 'info');
   location.href = 'tel:' + phone;
 }
@@ -1632,7 +1642,6 @@ function renderWorkerMenu() {
             <button class="lang-btn on-light ${currentLang==='hi'?'active':''}" onclick="switchLang('hi')">HI</button>
           </div>
         </div>
-        <label class="consent-row" style="margin-top:14px"><input type="checkbox" ${voiceOn() ? 'checked' : ''} onchange="setVoice(this.checked)" /><span>🔊 ${bi('आवाज़ में पढ़कर सुनाएँ', 'Read screens aloud')}</span></label>
         <button class="btn secondary block" style="margin-top:14px" onclick="callSiteHr()">${t('callSiteHr')}</button>
         <button class="btn danger block" style="margin-top:8px" onclick="location.hash='#/w/logout-confirm';render()">${t('logout')}</button>
       </div>
