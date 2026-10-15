@@ -811,7 +811,7 @@ function regAadhaar() {
     <div class="card">
       ${regHeader(2, 'आधार कार्ड', 'Aadhaar card')}
       ${regState.aadhaarNameWarning ? `<div class="gps-status bad">${biText('आधार पर नाम है', 'Name on Aadhaar is')} "${esc(regState.aadhaarNameWarning)}" - ${biText('नीचे आपका नाम इससे मेल खाना चाहिए।', 'your name below must match it.')}
-        <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">${biText('आधार वाला नाम इस्तेमाल करें', 'Use Aadhaar name')}</button></div>` : ''}
+        <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName()">${biText('आधार वाला नाम इस्तेमाल करें', 'Use Aadhaar name')}</button></div>` : ''}
       <div class="kyc-status ${w.aadhaar_verified ? 'ok' : ''}">${w.aadhaar_verified ? '✅ ' + bi('आधार सत्यापित', 'Aadhaar verified') + (w.aadhaar_masked ? ` - ${esc(w.aadhaar_masked)}` : '') : '⏳ ' + bi('आधार की पुष्टि बाकी है', 'Aadhaar not yet verified')}</div>
       ${!w.aadhaar_verified ? `<button class="btn primary block big" onclick="startDigilocker()">🔐 ${bi('आधार OTP से पुष्टि करें', 'Verify Aadhaar with OTP')}</button>
         <p class="muted small">${bi('OTP आपके आधार से जुड़े मोबाइल पर आएगा - आपकी फोटो और जानकारी भी यहीं से आएगी।', 'The OTP goes to the mobile linked to your Aadhaar - your photo and details come from here too.')}</p>
@@ -831,10 +831,14 @@ function regAadhaar() {
       ${regNav(1, null, 'regAadhaarNext()', !w.aadhaar_verified)}
     </div>`);
 }
-function useAadhaarName(btn) {
-  document.getElementById('f_name').value = regState.aadhaarNameWarning;
+// The mismatch happens BEFORE aadhaar_verified is true (that's exactly when the name
+// doesn't match yet), so the name field below isn't even on screen at this point - fix
+// and retry through the API directly instead of touching a DOM field that may not exist.
+async function useAadhaarName() {
+  const name = regState.aadhaarNameWarning;
   regState.aadhaarNameWarning = null;
-  btn.parentNode.remove();
+  toast(biText('नाम ठीक किया जा रहा है…', 'Fixing name…'), 'info');
+  if (await regSave({ name })) checkDigilockerComplete();
 }
 async function regAadhaarNext() {
   const get = id => document.getElementById(id).value.trim();
