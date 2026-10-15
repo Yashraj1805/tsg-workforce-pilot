@@ -852,10 +852,9 @@ function regPan() {
       ${!w.aadhaar_verified ? `<div class="gps-status warn">${bi('आधार की OTP पुष्टि अभी बाकी है - पिछले स्टेप में करें।', 'Aadhaar OTP verification is still pending - do it in the previous step.')}
         <button class="btn secondary small" style="margin-top:6px" onclick="renderRegStep(2)">${bi('आधार पर जाएँ', 'Go to Aadhaar')}</button></div>` : ''}
       <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ ' + bi('पैन की पुष्टि हो गई', 'PAN verified') + (w.pan_number ? ` · ${esc(w.pan_number.slice(0, 2))}XXXXXXX${esc(w.pan_number.slice(-1))}` : '') : '⏳ ' + bi('पैन की पुष्टि बाकी है', 'PAN not yet verified')}</div>
-      ${w.pan_photo_data_url ? `<img src="${imgSrc(w.pan_photo_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
-      ${w.pan_verified && !w.pan_photo_data_url ? `<p class="muted small">${bi('पैन DigiLocker से सत्यापित है - रिकॉर्ड के लिए कार्ड की एक फोटो लें।', 'PAN is verified through DigiLocker - take one photo of the card for the record.')}</p>` : ''}
-      <button class="btn ${w.pan_verified && !w.pan_photo_data_url ? 'primary' : 'secondary'} block" onclick="regPanPhoto()">📷 ${w.pan_photo_data_url ? bi('पैन की फोटो फिर से लें', 'Retake PAN photo') : bi('पैन कार्ड की फोटो लें', 'Take photo of PAN card')}</button>
       ${!w.pan_verified ? `
+        ${w.pan_photo_data_url ? `<img src="${imgSrc(w.pan_photo_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
+        <button class="btn secondary block" onclick="regPanPhoto()">📷 ${w.pan_photo_data_url ? bi('पैन की फोटो फिर से लें', 'Retake PAN photo') : bi('पैन कार्ड की फोटो लें', 'Take photo of PAN card')}</button>
         ${regState.panRead ? `<div class="kyc-status">${biText('फोटो से पैन पढ़ा गया', 'PAN read from photo')}: <b>${esc(regState.panRead.panNumber)}</b>${regState.panRead.nameOnCard ? ` · ${esc(regState.panRead.nameOnCard)}` : ''}</div>
           <button class="btn primary block" onclick="verifyPan(true)">${biText('हाँ, यह पैन सत्यापित करें', 'Yes, verify this PAN')}</button>` : ''}
         ${regState.panManual ? `
