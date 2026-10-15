@@ -132,7 +132,7 @@ p { text-wrap: pretty; }
 .lang-toggle .lang-btn.on-light { color: var(--muted); border: none; background: transparent; padding: 7px 18px; border-radius: var(--radius-xs); }
 .lang-toggle .lang-btn.on-light.active { background: var(--primary); color: #fff; box-shadow: 0 3px 10px rgba(65, 82, 214, 0.35); }
 
-.content { flex: 1; padding: 16px; padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); max-width: 720px; width: 100%; margin: 0 auto; animation: screen-in 220ms ease-out; }
+.content { flex: 1; padding: 16px; padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); max-width: 720px; width: 100%; margin: 0 auto; animation: screen-in 120ms ease-out; }
 @keyframes screen-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
 .bottom-nav {
@@ -634,16 +634,19 @@ a.btn.secondary { color: var(--primary-dark); }
 .btn.big:active { transform: scale(0.97); }
 .link-btn { text-decoration: none; }
 
-/* ---- Motion: content rises in with a stagger; everything respects reduced motion ---- */
-@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-.content > * { animation: rise 420ms var(--ease-out) both; }
-.content > *:nth-child(1) { animation-delay: 0ms; } .content > *:nth-child(2) { animation-delay: 45ms; }
-.content > *:nth-child(3) { animation-delay: 90ms; } .content > *:nth-child(4) { animation-delay: 135ms; }
-.content > *:nth-child(5) { animation-delay: 180ms; } .content > *:nth-child(6) { animation-delay: 225ms; }
-.content > *:nth-child(n+7) { animation-delay: 260ms; }
-.dash-tiles .dash-tile, .more-grid .more-tile, .tile-grid .tile { animation: rise 380ms var(--ease-out) both; }
-.dash-tiles .dash-tile:nth-child(2), .more-grid .more-tile:nth-child(even), .tile-grid .tile:nth-child(even) { animation-delay: 60ms; }
-.more-grid .more-tile:nth-child(n+3) { animation-delay: 110ms; } .more-grid .more-tile:nth-child(n+5) { animation-delay: 160ms; } .more-grid .more-tile:nth-child(n+7) { animation-delay: 210ms; }
+/* ---- Motion: a quick settle, not a show - every button tap re-triggers this, so it has
+   to read as instant. Was up to ~680ms before a 7th+ element finished (420ms rise +
+   260ms stagger delay); now under 200ms end to end (2026-10-15, Harpreet: "slow on
+   button click"). Everything still respects reduced motion. ---- */
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.content > * { animation: rise 140ms var(--ease-out) both; }
+.content > *:nth-child(1) { animation-delay: 0ms; } .content > *:nth-child(2) { animation-delay: 15ms; }
+.content > *:nth-child(3) { animation-delay: 30ms; } .content > *:nth-child(4) { animation-delay: 45ms; }
+.content > *:nth-child(5) { animation-delay: 55ms; } .content > *:nth-child(6) { animation-delay: 60ms; }
+.content > *:nth-child(n+7) { animation-delay: 60ms; }
+.dash-tiles .dash-tile, .more-grid .more-tile, .tile-grid .tile { animation: rise 140ms var(--ease-out) both; }
+.dash-tiles .dash-tile:nth-child(2), .more-grid .more-tile:nth-child(even), .tile-grid .tile:nth-child(even) { animation-delay: 20ms; }
+.more-grid .more-tile:nth-child(n+3) { animation-delay: 35ms; } .more-grid .more-tile:nth-child(n+5) { animation-delay: 50ms; } .more-grid .more-tile:nth-child(n+7) { animation-delay: 60ms; }
 .dash-ring-fill { transition: stroke-dashoffset 900ms var(--ease-out); }
 .bar-fill { transition: width 700ms var(--ease-out); }
 @media (prefers-reduced-motion: reduce) { .content > *, .dash-tiles .dash-tile, .more-grid .more-tile, .tile-grid .tile { animation: none; } .dash-ring-fill, .bar-fill { transition: none; } }
