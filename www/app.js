@@ -711,7 +711,7 @@ function requireWorker() {
 // are picture tiles with a tick (rule 5). Everything is saved to the server as the
 // worker goes, so leaving and coming back resumes where they were.
 let regState = { step: 1 };
-const REG_STEPS = 8;
+const REG_STEPS = 7;
 
 // Hindi first, English below.
 function bi(hi, en) {
@@ -757,7 +757,7 @@ function renderRegister() {
     // Resume at the first unfinished step.
     if (!regState.resumed) {
       regState.resumed = true;
-      const done = [w.consent_version === opts.consent.version, !!w.photo_data_url, !!(w.aadhaar_qr_at || w.aadhaar_verified) && !!w.name,
+      const done = [w.consent_version === opts.consent.version, !!w.aadhaar_verified && !!w.name,
         !!w.pan_verified, !!w.job_id, !!(w.vendor_id && w.location_id), !!w.qualification];
       const first = done.indexOf(false);
       regState.step = first === -1 ? REG_STEPS : first + 1;
@@ -768,7 +768,7 @@ function renderRegister() {
 
 async function renderRegStep(step) {
   regState.step = step;
-  return [null, regConsent, regPhoto, regAadhaar, regPan, regJob, regVendorSite, regEducation, regReview][step]();
+  return [null, regConsent, regAadhaar, regPan, regJob, regVendorSite, regEducation, regReview][step]();
 }
 async function regSave(fields, nextStep) {
   try {
@@ -800,49 +800,23 @@ async function regConsentNext() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-// ---- 2 Face photo (screen 5: live camera only, one live face - checked by the server) ----
-function regPhoto() {
-  const w = regState.worker;
-  renderShell(`
-    <div class="card">
-      ${regHeader(2, 'अपनी फोटो लें', 'Take your photo')}
-      <p class="muted small">${bi('कैमरे की ओर सीधे देखें। फोटो में सिर्फ़ आप हों।', 'Look straight at the camera. Only you in the photo.')}</p>
-      <div class="selfie-frame">
-        ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" alt="" class="selfie-preview" />` : `<div class="selfie-placeholder"><span class="icon-inline" style="width:28px;height:28px;margin:0 0 6px">${icon('camera')}</span></div>`}
-      </div>
-      <button class="btn ${w.photo_data_url ? 'secondary' : 'primary'} block big" onclick="regCapturePhoto()">📷 ${w.photo_data_url ? bi('फिर से लें', 'Retake') : bi('फोटो लें', 'Take photo')}</button>
-      ${regNav(1, null, 'renderRegStep(3)', !w.photo_data_url)}
-    </div>`);
-}
-async function regCapturePhoto() {
-  const res = await window.TSGNative.takeSelfie(isAssisted() ? 'REAR' : 'FRONT');
-  if (!res.ok) { toast(biText('कैमरा नहीं चला: ', 'Camera failed: ') + res.error, 'error'); return; }
-  const small = await shrinkDataUrl(res.dataUrl, 960, 0.8);
-  toast(biText('फोटो जाँची जा रही है…', 'Checking photo…'), 'info');
-  if (await regSave({ photoDataUrl: small })) renderRegStep(2);
-}
-
 // ---- 3 Aadhaar QR (screen 6) - fills name, father's name, DOB, gender, address ----
+// DigiLocker-only now (2026-10-15, Harpreet): the QR-photo/live-scanner paths are gone,
+// since a worker's photo has to come from somewhere, and only DigiLocker provides one -
+// see regPhoto's removal and kyc.js's digilocker/:id/complete. Every worker now proves
+// Aadhaar ownership through the OTP, no exceptions.
 function regAadhaar() {
   const w = regState.worker;
-  const fails = regState.aadhaarQrFails || 0;
   renderShell(`
     <div class="card">
-      ${regHeader(3, 'आधार कार्ड', 'Aadhaar card')}
-      ${w.aadhaar_qr_at
-        ? `<div class="kyc-status ok">✅ ${bi('आधार स्कैन हो गया', 'Aadhaar scanned')} - ${esc(w.aadhaar_masked || '')}</div>`
-        : `<p class="muted small">${bi('आधार कार्ड के QR की <b>फोटो लें</b> - आपकी जानकारी अपने-आप भर जाएगी। कार्ड सीधा रखें, QR फोटो में बड़ा दिखे, रोशनी अच्छी हो।', 'Take a <b>photo</b> of the QR on the Aadhaar card - your details fill in by themselves. Card flat, QR large in the photo, good light.')}</p>`}
+      ${regHeader(2, 'आधार कार्ड', 'Aadhaar card')}
       ${regState.aadhaarNameWarning ? `<div class="gps-status bad">${biText('आधार पर नाम है', 'Name on Aadhaar is')} "${esc(regState.aadhaarNameWarning)}" - ${biText('नीचे आपका नाम इससे मेल खाना चाहिए।', 'your name below must match it.')}
         <button class="btn secondary small" style="margin-top:6px" onclick="useAadhaarName(this)">${biText('आधार वाला नाम इस्तेमाल करें', 'Use Aadhaar name')}</button></div>` : ''}
-      ${regState.qrHelp ? `<div class="gps-status warn" style="margin-top:8px">${bi('लाइव स्कैनर QR नहीं पढ़ पाया (आधार का QR बहुत घना होता है)। नीचे वाले बटन से उसकी फोटो लें - वह काम करता है।', "The live scanner couldn't read it (the Aadhaar QR is very dense). Use the photo button below - that one works.")}</div>` : ''}
-      ${!w.aadhaar_qr_at && fails >= 2 ? `<div class="gps-status warn" style="margin-top:8px">${bi('QR बार-बार नहीं पढ़ पा रहा? नीचे OTP से पुष्टि करें, या टीम लीड को कॉल करें - वे आपका पंजीकरण कर देंगे।', "QR still not reading after a few tries? Verify with OTP below instead, or call Team Lead - they can register you.")}
-        <button class="btn warn small block" style="margin-top:8px" onclick="callSiteHr()">📞 ${t('callSiteHr')}</button></div>` : ''}
-      <button class="btn primary block big" onclick="regPhotoAadhaarQr()">📷 ${w.aadhaar_qr_at ? bi('फिर से फोटो लें', 'Take the photo again') : bi('आधार QR की फोटो लें', 'Take a photo of the Aadhaar QR')}</button>
-      <button class="btn secondary block" onclick="regScanAadhaar()">${bi('लाइव स्कैनर आज़माएँ', 'Try the live scanner instead')}</button>
-      <div class="kyc-status ${w.aadhaar_verified ? 'ok' : ''}" style="margin-top:14px">${w.aadhaar_verified ? '✅ ' + bi('OTP से पुष्टि हो गई', 'Verified with OTP') : '⏳ ' + bi('अब OTP से पुष्टि करें', 'Now verify with OTP')}</div>
-      ${!w.aadhaar_verified ? `<button class="btn primary block" onclick="startDigilocker()">🔐 ${bi('आधार OTP से पुष्टि करें', 'Verify Aadhaar with OTP')}</button>
-        <p class="muted small">${w.aadhaar_qr_at ? bi('OTP आपके आधार से जुड़े मोबाइल पर आएगा।', 'The OTP goes to the mobile linked to your Aadhaar.') : bi('QR की फोटो काम न आए तो यह भी चलेगा - OTP आपके आधार से जुड़े मोबाइल पर आएगा।', "This works even without the QR photo - the OTP goes to the mobile linked to your Aadhaar.")}</p>` : ''}
-      ${w.aadhaar_qr_at || w.name ? `
+      <div class="kyc-status ${w.aadhaar_verified ? 'ok' : ''}">${w.aadhaar_verified ? '✅ ' + bi('आधार सत्यापित', 'Aadhaar verified') + (w.aadhaar_masked ? ` - ${esc(w.aadhaar_masked)}` : '') : '⏳ ' + bi('आधार की पुष्टि बाकी है', 'Aadhaar not yet verified')}</div>
+      ${!w.aadhaar_verified ? `<button class="btn primary block big" onclick="startDigilocker()">🔐 ${bi('आधार OTP से पुष्टि करें', 'Verify Aadhaar with OTP')}</button>
+        <p class="muted small">${bi('OTP आपके आधार से जुड़े मोबाइल पर आएगा - आपकी फोटो और जानकारी भी यहीं से आएगी।', 'The OTP goes to the mobile linked to your Aadhaar - your photo and details come from here too.')}</p>
+        <button class="btn warn small block" style="margin-top:8px" onclick="callSiteHr()">📞 ${bi('मदद चाहिए? टीम लीड को कॉल करें', "Need help? Call Team Lead")}</button>` : ''}
+      ${w.aadhaar_verified ? `
         <label>${t('fullName')}</label><input id="f_name" class="input" value="${esc(w.name||'')}" />
         <label>${t('fatherName')}</label><input id="f_father" class="input" value="${esc(w.father_name||'')}" />
         <label>${t('dob')}</label><input id="f_dob" type="date" class="input" value="${esc(w.dob||'')}" />
@@ -854,50 +828,8 @@ function regAadhaar() {
         </select>
         <label>${t('address')}</label><textarea id="f_address" class="input">${esc(w.address||'')}</textarea>
         <label>${t('emergencyContact')}</label><input id="f_emg" class="input" maxlength="10" inputmode="numeric" value="${esc(w.emergency_contact||'')}" />` : ''}
-      ${regNav(2, null, 'regAadhaarNext()', !(w.aadhaar_qr_at || w.name))}
+      ${regNav(1, null, 'regAadhaarNext()', !w.aadhaar_verified)}
     </div>`);
-}
-// R04: the server decodes the QR, keeps only the masked number, and fills empty fields.
-async function regScanAadhaar() {
-  const scan = await window.TSGNative.scanQrCode();
-  if (!scan.ok) {
-    // The Aadhaar Secure QR is very dense and the live scanner often can't lock onto a
-    // printed card - offer the still-photo route rather than failing silently. After a
-    // couple of failures regAadhaar() surfaces the OTP-only and Site-HR escape hatches.
-    regState.qrHelp = true;
-    if (!scan.cancelled) { toast(scan.error, 'error'); regState.aadhaarQrFails = (regState.aadhaarQrFails || 0) + 1; }
-    renderRegStep(3);
-    return;
-  }
-  try { aadhaarQrAccepted(await window.Api.aadhaarQr(scan.text)); } catch (e) { toast(e.message, 'error'); regState.aadhaarQrFails = (regState.aadhaarQrFails || 0) + 1; }
-}
-// Fallback: a full-resolution photo of the QR, read by ML Kit on the phone or, failing
-// that, by the server.
-async function regPhotoAadhaarQr() {
-  const r = await window.TSGNative.scanQrFromPhoto();
-  if (r.cancelled) return;
-  toast(biText('QR पढ़ा जा रहा है…', 'Reading the QR…'), 'info');
-  try {
-    if (r.ok) return aadhaarQrAccepted(await window.Api.aadhaarQr(r.text));
-    if (r.dataUrl) return aadhaarQrAccepted(await window.Api.aadhaarQrImage(r.dataUrl));
-    regState.aadhaarQrFails = (regState.aadhaarQrFails || 0) + 1;
-    toast(r.error || biText('फोटो नहीं ले पाया', 'Could not take the photo'), 'error');
-    renderRegStep(3);
-  } catch (e) {
-    regState.aadhaarQrFails = (regState.aadhaarQrFails || 0) + 1;
-    toast(e.message, 'error');
-    renderRegStep(3);
-  }
-}
-function aadhaarQrAccepted(result) {
-  regState.qrHelp = false;
-  regState.aadhaarQrFails = 0;
-  regState.worker = result.worker;
-  // R05: names must match. The server won't block the scan (the typed name may just be
-  // a draft), but submit will - so say so now, with the Aadhaar name to copy.
-  regState.aadhaarNameWarning = result.nameMatches === false ? result.name : null;
-  toast(biText(`आधार स्कैन हुआ (…${result.last4})`, `Aadhaar scanned (…${result.last4})`), result.nameMatches === false ? 'error' : 'success');
-  renderRegStep(3);
 }
 function useAadhaarName(btn) {
   document.getElementById('f_name').value = regState.aadhaarNameWarning;
@@ -908,7 +840,7 @@ async function regAadhaarNext() {
   const get = id => document.getElementById(id).value.trim();
   const fields = { name: get('f_name'), fatherName: get('f_father'), dob: get('f_dob'), gender: get('f_gender'), address: get('f_address'), emergencyContact: get('f_emg') };
   if (!fields.name) { toast(biText('नाम ज़रूरी है', 'Name is required'), 'error'); return; }
-  regSave(fields, 4);
+  regSave(fields, 3);
 }
 
 // ---- 4 PAN photo + verification (screen 7), DigiLocker Aadhaar OTP ----
@@ -916,9 +848,9 @@ function regPan() {
   const w = regState.worker;
   renderShell(`
     <div class="card">
-      ${regHeader(4, 'पैन कार्ड', 'PAN card')}
+      ${regHeader(3, 'पैन कार्ड', 'PAN card')}
       ${!w.aadhaar_verified ? `<div class="gps-status warn">${bi('आधार की OTP पुष्टि अभी बाकी है - पिछले स्टेप में करें।', 'Aadhaar OTP verification is still pending - do it in the previous step.')}
-        <button class="btn secondary small" style="margin-top:6px" onclick="renderRegStep(3)">${bi('आधार पर जाएँ', 'Go to Aadhaar')}</button></div>` : ''}
+        <button class="btn secondary small" style="margin-top:6px" onclick="renderRegStep(2)">${bi('आधार पर जाएँ', 'Go to Aadhaar')}</button></div>` : ''}
       <div class="kyc-status ${w.pan_verified?'ok':''}">${w.pan_verified ? '✅ ' + bi('पैन की पुष्टि हो गई', 'PAN verified') + (w.pan_number ? ` · ${esc(w.pan_number.slice(0, 2))}XXXXXXX${esc(w.pan_number.slice(-1))}` : '') : '⏳ ' + bi('पैन की पुष्टि बाकी है', 'PAN not yet verified')}</div>
       ${w.pan_photo_data_url ? `<img src="${imgSrc(w.pan_photo_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:140px" />` : ''}
       ${w.pan_verified && !w.pan_photo_data_url ? `<p class="muted small">${bi('पैन DigiLocker से सत्यापित है - रिकॉर्ड के लिए कार्ड की एक फोटो लें।', 'PAN is verified through DigiLocker - take one photo of the card for the record.')}</p>` : ''}
@@ -929,7 +861,7 @@ function regPan() {
         ${regState.panManual ? `
           <input id="f_pan" class="input" maxlength="10" placeholder="ABCDE1234F" style="text-transform:uppercase" />
           <button class="btn secondary block" onclick="verifyPan(false)">${biText('पैन सत्यापित करें', 'Verify PAN')}</button>
-        ` : `<button class="link-btn small" onclick="regState.panManual=true;renderRegStep(4)">${biText('फोटो नहीं ले पा रहे? पैन टाइप करें', "Can't take a photo? Type the PAN instead")}</button>`}
+        ` : `<button class="link-btn small" onclick="regState.panManual=true;renderRegStep(3)">${biText('फोटो नहीं ले पा रहे? पैन टाइप करें', "Can't take a photo? Type the PAN instead")}</button>`}
       ` : ''}
       ${(!w.aadhaar_verified || !w.pan_verified) && regState.opts.devSkipAllowed ? `
         <div class="gps-status warn" style="margin-top:16px">
@@ -940,7 +872,7 @@ function regPan() {
         ${w.bank_passbook_data_url ? `<img src="${imgSrc(w.bank_passbook_data_url)}" alt="" class="selfie-preview" style="border-radius:8px;max-height:120px" />` : ''}
         <button class="btn secondary small" onclick="regPassbookPhoto()">📷 ${w.bank_passbook_data_url ? 'Retake' : 'Take photo'}</button>
       </details>
-      ${regNav(3, null, 'renderRegStep(5)', !(w.aadhaar_verified && w.pan_verified))}
+      ${regNav(2, null, 'renderRegStep(4)', !(w.aadhaar_verified && w.pan_verified))}
     </div>`);
 }
 async function skipKycDev() {
@@ -948,7 +880,7 @@ async function skipKycDev() {
     const result = await window.Api.skipKycDev();
     regState.worker = result.worker;
     toast(biText('KYC छोड़ दिया गया (dev mode)', 'KYC skipped (dev mode)'), 'success');
-    renderRegStep(4);
+    renderRegStep(3);
   } catch (e) { toast(e.message, 'error'); }
 }
 async function startDigilocker() {
@@ -982,8 +914,14 @@ async function checkDigilockerComplete() {
     const result = await window.Api.digilockerComplete(regState.digilockerId);
     regState.worker = result.worker;
     toast(result.pan === 'verified' ? biText('आधार और पैन सत्यापित', 'Aadhaar and PAN verified') : biText('आधार सत्यापित', 'Aadhaar verified'), 'success');
-    renderRegStep(4);
-  } catch (e) { toast(e.message, 'error'); }
+    renderRegStep(2);
+  } catch (e) {
+    // R05: a name typed before DigiLocker (e.g. a resumed draft) that doesn't match -
+    // offer the one-tap fix instead of just failing.
+    if (e.data && e.data.aadhaarName) regState.aadhaarNameWarning = e.data.aadhaarName;
+    toast(e.message, 'error');
+    renderRegStep(2);
+  }
 }
 // R04: PAN by photo - the server reads the number (OCR) and the worker only confirms it.
 async function regPanPhoto() {
@@ -993,12 +931,12 @@ async function regPanPhoto() {
   try {
     regState.panRead = await window.Api.panPhoto(await shrinkDataUrl(photo.dataUrl, 1600, 0.85));
     regState.worker = await window.Api.getMe();
-    renderRegStep(4);
+    renderRegStep(3);
   } catch (e) {
     regState.panRead = null;
     if (e.data && e.data.manualEntry) regState.panManual = true;
     toast(e.message, 'error');
-    renderRegStep(4);
+    renderRegStep(3);
   }
 }
 async function verifyPan(fromPhoto) {
@@ -1011,28 +949,28 @@ async function verifyPan(fromPhoto) {
     const result = await window.Api.panVerify(pan); // no pan = verify the number read from the photo
     regState.worker = result.worker;
     toast(biText('पैन सत्यापित हो गया', 'PAN verified'), 'success');
-    renderRegStep(4);
+    renderRegStep(3);
   } catch (e) { toast(e.message, 'error'); }
 }
 // Design rule 4: "bank passbook if needed" - optional.
 async function regPassbookPhoto() {
   const photo = await window.TSGNative.takeDocumentPhoto();
   if (!photo.ok) { toast(biText('कैमरा नहीं चला: ', 'Camera failed: ') + photo.error, 'error'); return; }
-  if (await regSave({ bankPassbookDataUrl: await shrinkDataUrl(photo.dataUrl, 1600, 0.85) })) renderRegStep(4);
+  if (await regSave({ bankPassbookDataUrl: await shrinkDataUrl(photo.dataUrl, 1600, 0.85) })) renderRegStep(3);
 }
 
-// ---- 5 Job (screen 8: one choice from the admin's list) ----
+// ---- 4 Job (screen 8: one choice from the admin's list) ----
 function regJob() {
   renderShell(`
     <div class="card">
-      ${regHeader(5, 'आपका काम', 'Your job')}
+      ${regHeader(4, 'आपका काम', 'Your job')}
       ${tiles(regState.opts.jobs, regState.worker.job_id, 'regPickJob')}
-      ${regNav(4, null, 'renderRegStep(6)', !regState.worker.job_id)}
+      ${regNav(3, null, 'renderRegStep(5)', !regState.worker.job_id)}
     </div>`);
 }
-async function regPickJob(id) { if (await regSave({ jobId: id })) renderRegStep(5); }
+async function regPickJob(id) { if (await regSave({ jobId: id })) renderRegStep(4); }
 
-// ---- 6 Vendor + site (screen 9: vendor from admin list; site set by GPS) ----
+// ---- 5 Vendor + site (screen 9: vendor from admin list; site set by GPS) ----
 async function regVendorSite() {
   await withLoading(() => window.Api.listVendors(), (allVendors) => {
     const w = regState.worker;
@@ -1041,7 +979,7 @@ async function regVendorSite() {
     const vendors = allVendors.filter(v => v.id === w.vendor_id || (v.status !== 'inactive' && !(v.contract_end && v.contract_end < today) && !(v.contract_start && v.contract_start > today)));
     renderShell(`
       <div class="card">
-        ${regHeader(6, 'वेंडर और साइट', 'Vendor and site')}
+        ${regHeader(5, 'वेंडर और साइट', 'Vendor and site')}
         <label>${t('vendor')}</label>
         ${vendors.length === 0 ? `<div class="gps-status bad">${t('noVendorsLocationsYet')}</div>` :
           tiles(vendors.map(v => ({ id: v.id, en: v.name, icon: '🏢' })), w.vendor_id, 'regPickVendor')}
@@ -1049,11 +987,11 @@ async function regVendorSite() {
         ${w.location_id ? `<div class="kyc-status ok">📍 ${esc(regState.siteName || (w.location && w.location.name) || 'Site set')}</div>` : ''}
         ${isAssisted() ? `<p class="muted small">Site is the Team Lead's location.</p>` :
           `<button class="btn ${w.location_id ? 'secondary' : 'primary'} block" onclick="regSiteFromGps()">📍 ${w.location_id ? bi('फिर से जाँचें', 'Check again') : bi('मेरी साइट GPS से पता करें', 'Find my site by GPS')}</button>`}
-        ${regNav(5, null, 'renderRegStep(7)', !(w.vendor_id && w.location_id))}
+        ${regNav(4, null, 'renderRegStep(6)', !(w.vendor_id && w.location_id))}
       </div>`);
   });
 }
-async function regPickVendor(id) { if (await regSave({ vendorId: id })) renderRegStep(6); }
+async function regPickVendor(id) { if (await regSave({ vendorId: id })) renderRegStep(5); }
 async function regSiteFromGps() {
   toast(t('gpsChecking'), 'info');
   const pos = await window.TSGNative.getPosition();
@@ -1063,25 +1001,25 @@ async function regSiteFromGps() {
     regState.worker = r.worker;
     regState.siteName = r.location.name;
     toast(`📍 ${r.location.name} (${r.location.distanceM} m)`, 'success');
-    renderRegStep(6);
+    renderRegStep(5);
   } catch (e) { toast(e.message, 'error'); }
 }
 
-// ---- 7 Education + experience (screen 10: one choice each) ----
+// ---- 6 Education + experience (screen 10: one choice each) ----
 function regEducation() {
   const w = regState.worker;
   renderShell(`
     <div class="card">
-      ${regHeader(7, 'पढ़ाई और अनुभव', 'Education and experience')}
+      ${regHeader(6, 'पढ़ाई और अनुभव', 'Education and experience')}
       <label>${bi('पढ़ाई', 'Education')}</label>
       ${tiles(regState.opts.education, w.qualification, 'regPickEducation')}
       <label style="margin-top:14px">${bi('अनुभव', 'Experience')}</label>
       ${tiles(regState.opts.experience, w.experience, 'regPickExperience')}
-      ${regNav(6, null, 'renderRegStep(8)', !w.qualification)}
+      ${regNav(5, null, 'renderRegStep(7)', !w.qualification)}
     </div>`);
 }
-async function regPickEducation(id) { if (await regSave({ qualification: id })) renderRegStep(7); }
-async function regPickExperience(id) { if (await regSave({ experience: id })) renderRegStep(7); }
+async function regPickEducation(id) { if (await regSave({ qualification: id })) renderRegStep(6); }
+async function regPickExperience(id) { if (await regSave({ experience: id })) renderRegStep(6); }
 
 // ---- 8 Review and submit (screen 11) ----
 function regReview() {
@@ -1094,18 +1032,18 @@ function regReviewRender() {
   const row = (hi, en, val, step) => `<tr><td class="muted">${bi(hi, en)}</td><td>${val}</td><td><button class="link-btn small" onclick="renderRegStep(${step})">✏️</button></td></tr>`;
   renderShell(`
     <div class="card">
-      ${regHeader(8, 'जाँचें और भेजें', 'Check and submit')}
+      ${regHeader(7, 'जाँचें और भेजें', 'Check and submit')}
       ${w.photo_data_url ? `<img src="${imgSrc(w.photo_data_url)}" alt="" class="avatar" style="width:80px;height:80px;display:block;margin:0 auto 10px" />` : ''}
       <table class="tbl">
-        ${row('नाम', 'Name', esc(w.name || '-'), 3)}
-        ${row('आधार', 'Aadhaar', `${esc(w.aadhaar_masked || '-')} ${w.aadhaar_verified ? '✅' : '⏳'}`, 3)}
-        ${row('पैन', 'PAN', `${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '-'} ${w.pan_verified ? '✅' : '⏳'}`, 4)}
-        ${row('काम', 'Job', esc(label(o.jobs, w.job_id)), 5)}
-        ${row('वेंडर / साइट', 'Vendor / site', `${esc((w.vendor && w.vendor.name) || '-')} / ${esc((w.location && w.location.name) || regState.siteName || '-')}`, 6)}
-        ${row('पढ़ाई', 'Education', esc(label(o.education, w.qualification)), 7)}
-        ${row('अनुभव', 'Experience', esc(label(o.experience, w.experience)), 7)}
+        ${row('नाम', 'Name', esc(w.name || '-'), 2)}
+        ${row('आधार', 'Aadhaar', `${esc(w.aadhaar_masked || '-')} ${w.aadhaar_verified ? '✅' : '⏳'}`, 2)}
+        ${row('पैन', 'PAN', `${w.pan_number ? '••••••' + esc(w.pan_number.slice(-4)) : '-'} ${w.pan_verified ? '✅' : '⏳'}`, 3)}
+        ${row('काम', 'Job', esc(label(o.jobs, w.job_id)), 4)}
+        ${row('वेंडर / साइट', 'Vendor / site', `${esc((w.vendor && w.vendor.name) || '-')} / ${esc((w.location && w.location.name) || regState.siteName || '-')}`, 5)}
+        ${row('पढ़ाई', 'Education', esc(label(o.education, w.qualification)), 6)}
+        ${row('अनुभव', 'Experience', esc(label(o.experience, w.experience)), 6)}
       </table>
-      ${regNav(7, bi('HR को भेजें', 'Submit to HR'), 'regSubmit()')}
+      ${regNav(6, bi('HR को भेजें', 'Submit to HR'), 'regSubmit()')}
     </div>`);
 }
 async function regSubmit() {
