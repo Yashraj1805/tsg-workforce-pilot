@@ -3306,16 +3306,40 @@ function renderHrUsers() {
               <td><button class="btn secondary small" onclick="startEditUser('${u.id}')">Edit</button></td>
             </tr>`).join('')}</tbody>
           </table>
-          ${editingUser ? renderUserForm(roles, locations, vendors) : `<button class="btn primary" onclick="startEditUser(null)">Add user</button>`}
+          <button class="btn primary" onclick="startEditUser(null)">Add user</button>
         </div>
         <div class="card"><h3>Database backups</h3><p class="muted small">Taken automatically every night (BRD: backed up daily).</p><div id="backupList">${spinnerRow('Loading…')}</div>
           <button class="btn secondary small" onclick="backupNow()">Back up now</button></div>
       `);
       window._adminUsers = users;
+      window._adminLocations = locations;
+      window._adminVendors = vendors;
       loadBackups();
-      syncUserScopeFields();
     }
   );
+}
+// Edit/Add user opens as a popup over the list (rather than expanding the page inline) -
+// a form this long pushed the Save button under the keyboard/bottom-nav when it lived
+// on the page itself.
+function openUserModal() {
+  const back = document.createElement('div');
+  back.className = 'dialog-backdrop';
+  back.id = 'userModalBackdrop';
+  back.innerHTML = `<div class="dialog">${renderUserForm(window._adminRoles || [], window._adminLocations || [], window._adminVendors || [])}</div>`;
+  back.addEventListener('click', (e) => { if (e.target === back) closeUserModal(); });
+  document.body.appendChild(back);
+  syncUserScopeFields();
+}
+function closeUserModal() {
+  const back = document.getElementById('userModalBackdrop');
+  if (back) back.remove();
+  editingUser = null;
+}
+function refreshUserModal() {
+  const back = document.getElementById('userModalBackdrop');
+  if (!back) return;
+  back.querySelector('.dialog').innerHTML = renderUserForm(window._adminRoles || [], window._adminLocations || [], window._adminVendors || []);
+  syncUserScopeFields();
 }
 async function loadBackups() {
   const el = document.getElementById('backupList'); if (!el) return;
@@ -3329,7 +3353,7 @@ async function backupNow() {
 }
 function startEditUser(id) {
   editingUser = id ? { ...(window._adminUsers || []).find(u => u.id === id) } : {};
-  renderHrUsers();
+  openUserModal();
 }
 function renderUserForm(roles, locations, vendors) {
   const u = editingUser, isNew = !u.id;
@@ -3361,7 +3385,7 @@ function renderUserForm(roles, locations, vendors) {
           <div class="pw-temp"><div><div class="small muted">New temporary password - share it with ${esc(u.name || u.email)}, they must change it at first login</div><code>${esc(u.tempPassword)}</code></div><button class="btn secondary small" onclick="copyText('${esc(u.tempPassword)}')">Copy</button></div>` : `
           <button class="btn secondary block" onclick="resetUserPassword('${u.id}')"><span class="nav-icon" style="vertical-align:-3px;margin-right:6px">${icon('key')}</span>Reset password${u.has_password === false ? ' (none set yet)' : ''}</button>`}`}
       <div class="wizard-actions">
-        <button class="btn secondary" onclick="editingUser=null;renderHrUsers()">${t('cancel')}</button>
+        <button class="btn secondary" onclick="closeUserModal()">${t('cancel')}</button>
         <button class="btn primary" onclick="saveUser()">${t('save')}</button>
       </div>
     </div>
@@ -3376,7 +3400,7 @@ async function resetUserPassword(id) {
   try {
     const r = await window.Api.resetAdminPassword(id);
     editingUser = { ...u, tempPassword: r.password };
-    renderHrUsers();
+    refreshUserModal();
     toast('Temporary password set', 'success');
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -3402,14 +3426,15 @@ async function saveUser() {
   try {
     if (editingUser.id) {
       await window.Api.updateAdminUser(editingUser.id, { ...body, status: val('au_status') });
-      editingUser = null;
+      closeUserModal();
+      renderHrUsers();
     } else {
       const created = await window.Api.createAdminUser({ ...body, email: val('au_email'), password: val('au_password') });
-      // Keep the form open on the new user so the temporary password stays on screen to share.
+      // Keep the modal open on the new user so the temporary password stays on screen to share.
       editingUser = { ...created, tempPassword: val('au_password') };
+      refreshUserModal();
     }
     toast('User saved', 'success');
-    renderHrUsers();
   } catch (e) { toast(e.message, 'error'); }
 }
 

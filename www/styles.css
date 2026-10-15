@@ -83,7 +83,7 @@ p { text-wrap: pretty; }
    destructive actions in the "bad" colour, irreversible ones need a typed word. */
 .dialog-backdrop { position: fixed; inset: 0; background: rgba(21, 23, 46, 0.55); display: flex; align-items: flex-end; justify-content: center; z-index: 60; padding: 16px; animation: fadeIn 140ms ease; }
 @media (min-width: 640px) { .dialog-backdrop { align-items: center; } }
-.dialog { background: var(--card-bg); border-radius: var(--radius-lg); padding: 20px 20px 16px; width: 100%; max-width: 440px; box-shadow: var(--shadow-lg); animation: dialogIn 180ms cubic-bezier(0.16, 1, 0.3, 1); }
+.dialog { background: var(--card-bg); border-radius: var(--radius-lg); padding: 20px 20px 16px; width: 100%; max-width: 440px; max-height: 86vh; overflow-y: auto; box-shadow: var(--shadow-lg); animation: dialogIn 180ms cubic-bezier(0.16, 1, 0.3, 1); }
 .dialog h3 { margin: 0 0 6px; font-size: 18px; }
 .dialog p { margin: 0 0 12px; color: var(--muted); font-size: 14.5px; }
 .dialog .input { margin-bottom: 10px; }
@@ -584,9 +584,9 @@ h3 .bi-en { font-size: 0.7em; }
 
 /* ---- Typography scale: heavier, tighter display; calmer body; one family ---- */
 body { font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
-h2 { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
-h3 { font-size: 18px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.2; margin-bottom: 12px; }
-h4 { font-size: 15px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 8px; color: var(--text-strong); }
+h2 { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; overflow-wrap: anywhere; }
+h3 { font-size: 18px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.2; margin-bottom: 12px; overflow-wrap: anywhere; }
+h4 { font-size: 15px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 8px; color: var(--text-strong); overflow-wrap: anywhere; }
 .center-card h3 { font-size: 22px; margin-bottom: 6px; }
 .small { font-size: 13px; line-height: 1.45; }
 label { font-size: 13px; font-weight: 700; letter-spacing: 0.01em; color: var(--text); margin-bottom: 2px; display: block; }
